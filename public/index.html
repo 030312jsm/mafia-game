@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="theme-color" content="#0b0d12" />
+  <title>마피아</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <div id="app">
+    <div class="boot">연결 중…</div>
+  </div>
+
+  <!-- 오디오 잠금 해제 배너 (모바일은 사용자 조작 없이는 소리가 안 난다) -->
+  <div id="audio-gate" class="audio-gate" hidden>
+    <button id="audio-gate-btn" class="btn btn-primary">🎧 이어폰 착용 · 소리 켜기</button>
+  </div>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/narration.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

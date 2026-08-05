@@ -1,0 +1,26 @@
+{
+  "name": "mafia-offline",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "오프라인 모임용 마피아 게임 - 폰 웹앱 + QR 입장 + 개인별 나레이션",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js",
+    "test": "node test/smoke.mjs",
+    "test:roles": "node test/roles.mjs",
+    "bots": "node test/play.mjs",
+    "sim": "node test/simulate.mjs"
+  },
+  "dependencies": {
+    "express": "^4.21.2",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.1"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.3"
+  }
+}

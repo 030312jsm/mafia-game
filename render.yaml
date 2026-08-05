@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: mafia
+    runtime: node
+    plan: free
+    buildCommand: npm ci --omit=dev
+    startCommand: npm start
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # 배포 후 실제 주소로 바꿔야 QR 이 올바른 곳을 가리킨다.
+      # 예: https://mafia-xxxx.onrender.com
+      - key: PUBLIC_URL
+        sync: false
