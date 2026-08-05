@@ -75,11 +75,13 @@ const run = async () => {
   check('비방장 시작 명령 거부', !notHost.ok, notHost.error);
 
   // 2) 직업 편성
-  const cfg = await host.emit('host:config', { patch: { roles: ROLES, nightSeconds: 600, discussSeconds: 600, voteSeconds: 600 } });
+  const cfg = await host.emit('host:config', {
+    patch: { compositionMode: 'manual', roles: ROLES, nightSeconds: 600, discussSeconds: 600, voteSeconds: 600 },
+  });
   check('직업 편성 저장', cfg.ok && cfg.validation.ok, (cfg.validation?.errors || []).join(' / '));
 
   const badCfg = await host.emit('host:config', {
-    patch: { roles: ['sniper', 'rigger', 'chairman', 'police', 'guardian'] },
+    patch: { roles: ['sniper', 'chairman', 'independent_mafia', 'police', 'guardian'] },
   });
   check('마피아 과반 편성 거부', !badCfg.validation.ok,
     badCfg.validation.errors.find((e) => e.includes('과반')) || '');

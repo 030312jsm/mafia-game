@@ -61,6 +61,8 @@ async function setup(roles, extraConfig = {}) {
 
   const cfg = await host.emit('host:config', {
     patch: {
+      // 시나리오 테스트는 직업을 정확히 지정해야 하므로 수동 편성으로 고정한다
+      compositionMode: 'manual',
       roles, deterministicRoles: true,
       nightSeconds: 600, discussSeconds: 600, voteSeconds: 600,
       ...extraConfig,
@@ -211,6 +213,80 @@ const run = async () => {
     await sleep(300);
     const pin = await g.c[1].emit('role:pin', { roleId: 'triplet_mafia' }); // 8인 이상 필요
     check('8인 미만에서는 삼둥이 거부', !pin.ok, pin.error || '');
+    g.close();
+  }
+
+  // ── 인원수 편성 + 직업 비공개 ───────────────────────────────
+  {
+    head('인원수 편성 — 진영 수만 정하면 직업은 시작할 때 무작위로 뽑힌다');
+    const g = await setup(Array.from({ length: 8 }, (_, i) => (i === 0 ? 'mafia' : 'citizen')));
+    await g.c[0].emit('host:reset', {});
+    await sleep(300);
+    const cfg = await g.c[0].emit('host:config', {
+      patch: {
+        compositionMode: 'counts',
+        teamCounts: { mafia: 2, citizen: 5, neutral: 1 },
+        deterministicRoles: false,
+      },
+    });
+    await sleep(300);
+    check('인원수 편성이 유효함', cfg.validation.ok, (cfg.validation.errors || []).join(' / '));
+    check('시작 전에는 직업 목록이 비어 있음',
+      (g.c[0].state.room.config.roles || []).length === 0,
+      JSON.stringify(g.c[0].state.room.config.roles));
+
+    await g.c[0].emit('host:seating', {});
+    await sleep(250);
+    for (let i = 0; i < 8; i++) await g.c[i].emit('seat:claim', { seat: i + 1 });
+    const st = await g.c[0].emit('host:start', {});
+    await sleep(400);
+    check('게임 시작', st.ok, st.error || '');
+
+    const teamOf = (i) => g.you(i).role.team;
+    const counts = { MAFIA: 0, CITIZEN: 0, NEUTRAL: 0 };
+    for (let i = 0; i < 8; i++) counts[teamOf(i)]++;
+    check('지정한 진영 인원 그대로 배정',
+      counts.MAFIA === 2 && counts.CITIZEN === 5 && counts.NEUTRAL === 1,
+      JSON.stringify(counts));
+    check('평마피아·평시민은 뽑히지 않음',
+      !Array.from({ length: 8 }, (_, i) => g.you(i).role.id).some((r) => r === 'mafia' || r === 'citizen'),
+      Array.from({ length: 8 }, (_, i) => g.you(i).role.id).join(','));
+    check('부정선거자는 편성에서 제외됨',
+      !Array.from({ length: 8 }, (_, i) => g.you(i).role.id).includes('rigger'));
+    g.close();
+  }
+
+  {
+    head('직업 비공개 — 게임 중 라인업이 아무에게도 노출되지 않는다');
+    const g = await setup(Array.from({ length: 8 }, (_, i) => (i === 0 ? 'mafia' : 'citizen')));
+    await g.c[0].emit('host:reset', {});
+    await sleep(300);
+    await g.c[0].emit('host:config', {
+      patch: {
+        compositionMode: 'counts',
+        teamCounts: { mafia: 2, citizen: 5, neutral: 1 },
+        hiddenLineup: true,
+        deterministicRoles: false,
+      },
+    });
+    await sleep(300);
+    await g.c[0].emit('host:seating', {});
+    await sleep(250);
+    for (let i = 0; i < 8; i++) await g.c[i].emit('seat:claim', { seat: i + 1 });
+    await g.c[0].emit('host:start', {});
+    await sleep(400);
+
+    check('라인업이 내려오지 않음', g.c[3].state.lineup === null, JSON.stringify(g.c[3].state.lineup));
+    check('상태에 직업 목록이 비어 있음',
+      (g.c[3].state.room.config.roles || []).length === 0,
+      JSON.stringify(g.c[3].state.room.config.roles));
+    check('비공개 표시가 내려옴', g.c[3].state.room.lineupHidden === true);
+    check('본인 직업은 정상적으로 보임', !!g.you(3).role?.name, g.you(3).role?.name);
+
+    // 게임이 끝나면 전원 공개
+    await g.c[0].emit('host:next', {});
+    await sleep(500);
+    check('게임 중에는 여전히 비공개', g.c[3].state.lineup === null);
     g.close();
   }
 

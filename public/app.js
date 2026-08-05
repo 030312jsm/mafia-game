@@ -259,7 +259,10 @@
             참가자 ${room.playerCount}</button>
           ${you?.isHost ? `
             <button class="${lobbyTab === 'roles' ? 'on' : ''}" data-action="lobby-tab" data-tab="roles">
-              편성 ${room.config.roles.length}/${room.playerCount}</button>
+              편성 ${room.config.compositionMode === 'counts'
+                ? (() => { const c = room.config.teamCounts || {};
+                    return (c.mafia || 0) + (c.citizen || 0) + (c.neutral || 0); })()
+                : room.config.roles.length}/${room.playerCount}</button>
             <button class="${lobbyTab === 'settings' ? 'on' : ''}" data-action="lobby-tab" data-tab="settings">
               설정</button>` : ''}
         </div>` : ''}`;
@@ -312,7 +315,11 @@
 
     // 방장이 아니면 탭이 없으므로 참가자 화면만 보여준다
     const tab = isHost ? lobbyTab : 'players';
-    if (tab === 'roles') return viewRoleSetup(counts) + viewRolePicker();
+    if (tab === 'roles') {
+      return room.config.compositionMode === 'counts'
+        ? viewCountSetup()
+        : viewRoleSetup(counts) + viewRolePicker();
+    }
     if (tab === 'settings') return viewLobbySettings();
     return viewLobbyPlayers();
   }
@@ -470,11 +477,65 @@
         <button class="btn btn-sm btn-ghost" data-action="toggle-picker" style="margin-top:10px">
           ${rolePickerOpen ? '직업 목록 접기' : '＋ 직업 추가'}
         </button>
+        <button class="btn btn-sm btn-ghost" data-action="comp-mode" data-mode="counts">
+          ← 인원수만 정하기
+        </button>
 
         ${rolePickerOpen ? `
           <h3>마피아</h3>${rowsFor('MAFIA')}
           <h3>시민</h3>${rowsFor('CITIZEN')}
           <h3>중립</h3>${rowsFor('NEUTRAL')}` : ''}
+      </div>
+
+      ${v.errors.length ? `<div class="card errors">${v.errors.map((e) => `<div>· ${esc(e)}</div>`).join('')}</div>` : ''}
+    `;
+  }
+
+  /** 편성 탭 — 진영별 인원수만 정하는 모드 */
+  function viewCountSetup() {
+    const { room } = S;
+    const n = room.playerCount;
+    const rec = S.recommend || { mafia: 0, citizen: 0, neutral: 0 };
+    const c = room.config.teamCounts || { mafia: 0, citizen: 0, neutral: 0 };
+    const total = c.mafia + c.citizen + c.neutral;
+    const v = validateLocal();
+
+    const row = (key, label, ico, value, hint) => `
+      <div class="rolerow" style="padding:10px">
+        <span class="lineup-icon">${ico}</span>
+        <div class="rn">${label}<div class="small dim">${hint}</div></div>
+        <div class="stepper">
+          <button data-action="count-dec" data-key="${key}" ${value <= 0 ? 'disabled' : ''}>−</button>
+          <div class="cnt">${value}</div>
+          <button data-action="count-inc" data-key="${key}" ${total >= n ? 'disabled' : ''}>+</button>
+        </div>
+      </div>`;
+
+    return `
+      <div class="card">
+        <div class="spread">
+          <h2 style="margin:0">진영 인원 <span class="dim small">${total} / ${n}</span></h2>
+          <button class="btn btn-sm" data-action="count-auto" style="margin:0">권장값</button>
+        </div>
+        <p class="small dim" style="margin:6px 0 10px">
+          인원수만 정하면 <b>어떤 직업이 들어갈지는 시작할 때 무작위로 정해집니다.</b>
+          ${n}인 권장 — 마피아 ${rec.mafia} · 시민 ${rec.citizen} · 중립 ${rec.neutral}
+        </p>
+        ${row('mafia', '마피아', '🕴️', c.mafia, '밤에 진영 전체가 한 명을 죽입니다')}
+        ${row('citizen', '시민', '🧍', c.citizen, '능력으로 마피아를 찾아냅니다')}
+        ${row('neutral', '중립', '🃏', c.neutral, '각자의 특수 조건으로 승리합니다')}
+
+        <label class="row small" style="margin-top:12px">
+          <input type="checkbox" id="cfg-hidden" ${room.config.hiddenLineup ? 'checked' : ''}
+                 data-action="toggle-hidden" style="width:auto;margin:0" />
+          <span>🎲 <b>직업 비공개</b> — 어떤 직업이 들어 있는지 게임이 끝날 때까지 아무도 모름</span>
+        </label>
+        <p class="small dim" style="margin:6px 0 0">
+          켜면 탐정의 2지선다와 저격수의 선택지도 전체 직업에서 나옵니다. 난이도가 확 올라갑니다.
+        </p>
+
+        <button class="btn btn-sm btn-ghost" data-action="comp-mode" data-mode="manual"
+                style="margin-top:12px">직업을 직접 고르기 →</button>
       </div>
 
       ${v.errors.length ? `<div class="card errors">${v.errors.map((e) => `<div>· ${esc(e)}</div>`).join('')}</div>` : ''}
@@ -550,8 +611,22 @@
   function validateLocal() {
     const { room, catalog } = S;
     const n = room.playerCount;
-    const roles = room.config.roles;
     const errors = [];
+
+    // 인원수 편성 모드는 진영별 합계만 본다
+    if (room.config.compositionMode === 'counts') {
+      const c = room.config.teamCounts || { mafia: 0, citizen: 0, neutral: 0 };
+      const total = c.mafia + c.citizen + c.neutral;
+      if (n < 4) errors.push('최소 4명이 필요합니다.');
+      if (total !== n) errors.push(`진영 인원 합계 ${total}명 / 참가자 ${n}명 — 개수를 맞추세요.`);
+      if (c.mafia < 1) errors.push('마피아가 최소 1명은 있어야 합니다.');
+      else if (c.mafia * 2 >= n) errors.push('마피아가 처음부터 과반입니다.');
+      if (c.citizen < 1) errors.push('시민이 최소 1명은 있어야 합니다.');
+      if (c.neutral > c.mafia) errors.push('중립은 마피아보다 많을 수 없습니다.');
+      return { ok: errors.length === 0, errors };
+    }
+
+    const roles = room.config.roles;
     if (n < 4) errors.push('최소 4명이 필요합니다.');
     if (roles.length !== n) errors.push(`직업 ${roles.length}개 / 참가자 ${n}명 — 개수를 맞추세요.`);
     let mafia = 0;
@@ -958,21 +1033,25 @@
   function viewRoleBook() {
     const { catalog, room } = S;
     if (!catalog?.length) return '';
+    // 인원수 편성이거나 비공개 판에서는 어떤 직업이 들어갔는지 표시하지 않는다
+    const showPicked = room.config.compositionMode === 'manual' && !room.lineupHidden;
     const counts = {};
-    for (const r of room.config.roles) counts[r] = (counts[r] || 0) + 1;
+    if (showPicked) for (const r of room.config.roles) counts[r] = (counts[r] || 0) + 1;
     const usable = catalog.filter((r) => r.implemented);
 
     const group = (team, label) => {
       const rows = usable.filter((r) => r.team === team);
       if (!rows.length) return '';
       return `<h3>${label}</h3>` + rows.map((r) => `
-        <div class="lineup-row ${counts[r.id] ? '' : 'off'}">
+        <div class="lineup-row ${showPicked && !counts[r.id] ? 'off' : ''}">
           <div class="lineup-head">
             <span class="lineup-icon">${icon(r.id)}</span>
             <b>${esc(r.name)}</b>
-            ${counts[r.id]
-              ? `<span class="tag known">이번 판 ${counts[r.id]}명</span>`
-              : '<span class="tag">미편성</span>'}
+            ${showPicked
+              ? (counts[r.id]
+                  ? `<span class="tag known">이번 판 ${counts[r.id]}명</span>`
+                  : '<span class="tag">미편성</span>')
+              : ''}
           </div>
           <div class="small dim lineup-desc">${esc(r.desc)}</div>
         </div>`).join('');
@@ -980,7 +1059,9 @@
 
     return `
       <p class="small dim" style="margin:0 0 10px">
-        전체 직업 설명입니다. 이번 판 편성에 들어간 직업은 「이번 판」으로 표시됩니다.
+        ${showPicked
+          ? '전체 직업 설명입니다. 이번 판 편성에 들어간 직업은 「이번 판」으로 표시됩니다.'
+          : '전체 직업 설명입니다. 이번 판에 무엇이 들어갈지는 시작할 때 정해집니다.'}
       </p>
       ${group('MAFIA', '마피아')}${group('CITIZEN', '시민')}${group('NEUTRAL', '중립')}`;
   }
@@ -1103,6 +1184,39 @@
         S.room.config.roles = roles;
         render();
         const res = await emit('host:config', { patch: { roles } });
+        if (!res.ok) toast(res.error);
+        break;
+      }
+      case 'count-inc':
+      case 'count-dec': {
+        const c = { ...(S.room.config.teamCounts || { mafia: 0, citizen: 0, neutral: 0 }) };
+        const k = t.dataset.key;
+        c[k] = Math.max(0, (c[k] || 0) + (a === 'count-inc' ? 1 : -1));
+        S.room.config.teamCounts = c;
+        render();
+        const res = await emit('host:config', { patch: { teamCounts: c } });
+        if (!res.ok) toast(res.error);
+        break;
+      }
+      case 'count-auto': {
+        const rec = S.recommend;
+        if (!rec) break;
+        const c = { mafia: rec.mafia, citizen: rec.citizen, neutral: rec.neutral };
+        S.room.config.teamCounts = c;
+        render();
+        const res = await emit('host:config', { patch: { teamCounts: c } });
+        if (!res.ok) toast(res.error);
+        break;
+      }
+      case 'toggle-hidden': {
+        const on = !S.room.config.hiddenLineup;
+        const res = await emit('host:config', { patch: { hiddenLineup: on } });
+        if (!res.ok) toast(res.error);
+        else toast(on ? '직업 비공개로 진행합니다.' : '직업 목록을 공개합니다.');
+        break;
+      }
+      case 'comp-mode': {
+        const res = await emit('host:config', { patch: { compositionMode: t.dataset.mode } });
         if (!res.ok) toast(res.error);
         break;
       }

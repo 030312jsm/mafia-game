@@ -18,6 +18,14 @@ export const PHASE = {
 };
 
 const DEFAULT_CONFIG = {
+  // 편성 방식.
+  // 'counts' = 진영별 인원수만 정하고, 어떤 직업이 들어갈지는 게임 시작 때 무작위로 뽑는다
+  // 'manual' = 직업을 하나하나 직접 고른다 (예전 방식)
+  compositionMode: 'counts',
+  teamCounts: { mafia: 0, citizen: 0, neutral: 0 },
+  // 어떤 직업이 이번 판에 들어 있는지 끝까지 감춘다.
+  // 켜면 탐정의 가짜 후보·저격수의 선택지·정신병자의 위장도 전체 직업에서 뽑는다.
+  hiddenLineup: false,
   roles: [],
   discussSeconds: 180,
   voteSeconds: 60,
@@ -103,6 +111,33 @@ export class Room {
     this.qrDataUrl = null;
     this.joinUrl = null;
     this.narrationSeq = 0;
+    // 이번 판에 실제로 쓰인 직업 목록. 시작할 때 확정된다.
+    // config.roles 와 분리해 둔 이유는, 인원수 편성 모드에서는
+    // 시작 전까지 어떤 직업이 뽑힐지 아무도 몰라야 하기 때문이다.
+    this.activeRoles = [];
+  }
+
+  /** 규칙 판정에 쓰는 이번 판의 직업 목록 */
+  get composition() {
+    if (this.activeRoles.length) return this.activeRoles;
+    return this.config.compositionMode === 'manual' ? this.config.roles : [];
+  }
+
+  /** 라인업을 감추는 판인지 */
+  get lineupHidden() {
+    return !!this.config.hiddenLineup && this.phase !== PHASE.END;
+  }
+
+  /**
+   * 탐정의 가짜 후보·저격수의 선택지·정신병자의 위장에 쓸 직업 풀.
+   * 라인업이 공개된 판에서는 「이번 판에 있는 직업」만 써야 정보가 의미를 갖고,
+   * 감춰진 판에서는 전체 직업에서 뽑아야 한다.
+   */
+  candidatePool() {
+    if (this.lineupHidden) {
+      return Object.values(ROLES).filter((r) => r.implemented && r.selectable).map((r) => r.id);
+    }
+    return [...new Set(this.composition)];
   }
 
   // ── 플레이어 관리 ─────────────────────────────────────────────
@@ -339,8 +374,24 @@ export class Room {
 
   // ── 설정 검증 ─────────────────────────────────────────────────
   validateConfig() {
-    const errors = [];
     const n = this.players.size;
+
+    // 인원수 편성 모드: 직업 목록 대신 진영별 인원수만 본다
+    if (this.config.compositionMode === 'counts') {
+      const errors = [];
+      if (n < 4) errors.push('최소 4명이 필요합니다.');
+      errors.push(...this.countsFeasible(this.config.teamCounts, n));
+      const unseated = this.playerList.filter((p) => p.seat == null);
+      const c = this.config.teamCounts;
+      return {
+        ok: errors.length === 0,
+        errors,
+        teams: { MAFIA: c.mafia, CITIZEN: c.citizen, NEUTRAL: c.neutral },
+        unseated: unseated.map((p) => p.id),
+      };
+    }
+
+    const errors = [];
     const roles = this.config.roles;
 
     if (n < 4) errors.push('최소 4명이 필요합니다.');
@@ -394,10 +445,16 @@ export class Room {
    * **이번 판 편성표에 실제로 들어 있는 시민 직업만** 쓴다.
    * 편성표는 공개 정보라, 없는 직업을 주면 본인이 바로 이상을 눈치챈다.
    */
-  lunaticDisguisePool(roles = this.config.roles) {
-    return [...new Set(roles)]
+  lunaticDisguisePool(roles = null) {
+    const source = roles ?? this.candidatePool();
+    const pool = [...new Set(source)]
       .map(getRole)
       .filter((r) => r && r.team === TEAM.CITIZEN && r.id !== 'lunatic');
+    if (pool.length) return pool;
+    // 뽑을 게 없으면 전체 시민 직업에서 고른다 (라인업이 감춰진 판 등)
+    return Object.values(ROLES).filter(
+      (r) => r.implemented && r.selectable && r.team === TEAM.CITIZEN && r.id !== 'lunatic'
+    );
   }
 
   /**
@@ -463,14 +520,90 @@ export class Room {
     return recommendCounts(n);
   }
 
+  /** 인원수 편성 모드에서 진영별로 쓸 수 있는 직업 (삼둥이 제외) */
+  poolFor(team) {
+    const pool = { MAFIA: MAFIA_POOL, CITIZEN: CITIZEN_POOL, NEUTRAL: NEUTRAL_POOL }[team] ?? [];
+    return pool.filter((id) => {
+      const r = getRole(id);
+      return r?.implemented && r.selectable && !isTriplet(id);
+    });
+  }
+
+  /**
+   * 진영별 인원수만 받아서 실제 직업을 무작위로 뽑는다.
+   * 삼둥이는 마피아·시민·중립 한 자리씩 정확히 차지하므로 인원수를 깨지 않는다.
+   */
+  drawComposition(counts, n = this.players.size) {
+    let { mafia, citizen, neutral } = counts;
+    const roles = [];
+
+    if (n >= 8 && mafia >= 1 && citizen >= 1 && neutral >= 1 && Math.random() < 0.3) {
+      roles.push(...TRIPLET_IDS);
+      mafia--; citizen--; neutral--;
+    }
+    roles.push(...shuffle(this.poolFor(TEAM.MAFIA)).slice(0, mafia));
+    roles.push(...shuffle(this.poolFor(TEAM.CITIZEN)).slice(0, citizen));
+    roles.push(...shuffle(this.poolFor(TEAM.NEUTRAL)).slice(0, neutral));
+    return roles;
+  }
+
+  /** 인원수 편성이 실제로 가능한지 (직업 수가 모자라지 않는지) */
+  countsFeasible(counts, n = this.players.size) {
+    const errors = [];
+    const { mafia, citizen, neutral } = counts;
+    const total = mafia + citizen + neutral;
+
+    if (total !== n) errors.push(`진영 인원 합계 ${total}명 / 참가자 ${n}명 — 개수가 맞아야 합니다.`);
+    if (mafia < 1) errors.push('마피아가 최소 1명은 있어야 합니다.');
+    if (citizen < 1) errors.push('시민이 최소 1명은 있어야 합니다.');
+    if (neutral < 0) errors.push('중립 인원이 잘못됐습니다.');
+    if (mafia * 2 >= n) errors.push('마피아가 처음부터 과반입니다.');
+    if (neutral > mafia) errors.push('중립은 마피아보다 많을 수 없습니다.');
+
+    // 삼둥이 없이도 뽑을 수 있어야 한다 (삼둥이는 확률적으로만 들어간다)
+    const cap = { mafia: this.poolFor(TEAM.MAFIA).length,
+                  citizen: this.poolFor(TEAM.CITIZEN).length,
+                  neutral: this.poolFor(TEAM.NEUTRAL).length };
+    if (mafia > cap.mafia) errors.push(`마피아 직업이 ${cap.mafia}종뿐이라 ${mafia}명을 채울 수 없습니다.`);
+    if (citizen > cap.citizen) errors.push(`시민 직업이 ${cap.citizen}종뿐이라 ${citizen}명을 채울 수 없습니다.`);
+    if (neutral > cap.neutral) errors.push(`중립 직업이 ${cap.neutral}종뿐이라 ${neutral}명을 채울 수 없습니다.`);
+
+    return errors;
+  }
+
+  /**
+   * 설정이 바뀐 뒤 앞뒤를 맞춘다.
+   * 인원수 편성으로 넘어가면 직업 목록과 찜은 의미가 없으므로 비운다
+   * (남겨두면 시작 전에 어떤 직업이 들어갈지 새어 나간다).
+   */
+  normalizeConfig() {
+    if (this.config.compositionMode === 'counts') {
+      this.config.roles = [];
+      this.config.pinnedRoles = {};
+      const c = this.config.teamCounts;
+      if (!c || (c.mafia + c.citizen + c.neutral) === 0) this.resetTeamCounts();
+    } else if (!this.config.roles?.length) {
+      this.config.roles = this.suggestRoles();
+    }
+  }
+
+  /** 인원수가 바뀌면 권장값으로 다시 맞춘다 */
+  resetTeamCounts(n = this.players.size) {
+    const rec = recommendCounts(n);
+    this.config.teamCounts = { mafia: rec.mafia, citizen: rec.citizen, neutral: rec.neutral };
+  }
+
   /**
    * 편성표를 인원수에 맞게 다시 만든다.
    * 찜해둔 직업은 반드시 살려둔다 — 자동 편성이 찜을 지워버리면
    * 삼둥이처럼 세트로 들어가야 하는 직업이 반쪽만 남는다.
    */
   rebuildComposition() {
-    this.config.roles = this.suggestRoles();
-    this.ensurePinnedInComposition();
+    this.resetTeamCounts();
+    if (this.config.compositionMode === 'manual') {
+      this.config.roles = this.suggestRoles();
+      this.ensurePinnedInComposition();
+    }
   }
 
   // ── 시작 ──────────────────────────────────────────────────────
@@ -503,9 +636,16 @@ export class Room {
     if (!v.ok) return { ok: false, error: v.errors.join('\n') };
     if (v.unseated.length) return { ok: false, error: '아직 자리를 정하지 않은 사람이 있습니다.' };
 
+    // 이번 판에 쓸 직업 목록을 확정한다.
+    // 인원수 편성 모드에서는 여기서 처음으로 뽑히므로, 그 전까지는 아무도 알 수 없다.
+    this.activeRoles =
+      this.config.compositionMode === 'counts'
+        ? this.drawComposition(this.config.teamCounts)
+        : [...this.config.roles];
+
     // 찜해둔 직업을 먼저 배정하고, 나머지를 나눠 준다.
-    const pins = this.config.pinnedRoles || {};
-    const pool = [...this.config.roles];
+    const pins = this.config.compositionMode === 'manual' ? (this.config.pinnedRoles || {}) : {};
+    const pool = [...this.activeRoles];
     const fixed = new Map();
     for (const p of this.aliveBySeat) {
       const rid = pins[p.id];
@@ -546,7 +686,7 @@ export class Room {
     // 정신병자 위장 직업
     const lunatic = this.playerList.find((p) => p.roleId === 'lunatic');
     if (lunatic) {
-      const pool = this.lunaticDisguisePool();
+      const pool = this.lunaticDisguisePool(this.lineupHidden ? null : this.activeRoles);
       lunatic.fakeRoleId = (this.config.deterministicRoles ? pool[0] : pick(pool)).id;
     }
 
@@ -867,9 +1007,12 @@ export class Room {
    * 둘 중 어느 쪽이 진짜인지 바로 들통난다. 반드시 판에 있는 직업만 쓴다.
    */
   decoyPoolFor(target) {
-    const inPlay = new Set(this.config.roles);
-    for (const p of this.players.values()) if (p.roleId) inPlay.add(p.roleId); // 포섭된 마피아 등
-    const pool = [...inPlay].filter((id) => id !== target.roleId).map(getRole).filter(Boolean);
+    const candidates = new Set(this.candidatePool());
+    // 라인업이 공개된 판에서는 포섭 등으로 생겨난 직업도 후보에 넣는다
+    if (!this.lineupHidden) {
+      for (const p of this.players.values()) if (p.roleId) candidates.add(p.roleId);
+    }
+    const pool = [...candidates].filter((id) => id !== target.roleId).map(getRole).filter(Boolean);
     if (pool.length) return pool;
     return Object.values(ROLES).filter((r) => r.implemented && r.id !== target.roleId);
   }
@@ -985,7 +1128,7 @@ export class Room {
     }
     const target = this.players.get(targetId);
     if (!target || !target.alive || target.id === p.id) return { ok: false, error: '지목할 수 없는 대상입니다.' };
-    if (!snipeChoices(this.config.roles).some((c) => c.key === roleKey)) {
+    if (!snipeChoices(this.candidatePool()).some((c) => c.key === roleKey)) {
       return { ok: false, error: '이번 판에 없는 직업입니다.' };
     }
 
@@ -1262,6 +1405,7 @@ export class Room {
     this.phase = PHASE.LOBBY;
     this.day = 0;
     this.result = null;
+    this.activeRoles = [];
     this.publicLog = [];
     this.nightActions.clear();
     this.ballots.clear();
@@ -1368,7 +1512,10 @@ export class Room {
         deadline: this.deadline,
         playerCount: this.players.size,
         botCount: this.bots.length,
-        config: this.config,
+        // 라인업을 감추는 판에서는 직업 목록 자체를 내려보내지 않는다.
+        // 개발자 도구로 상태를 들여다봐도 알 수 없어야 한다.
+        config: this.lineupHidden ? { ...this.config, roles: [], pinnedRoles: {} } : this.config,
+        lineupHidden: this.lineupHidden,
         qr: this.phase === PHASE.LOBBY ? this.qrDataUrl : null,
       },
       you: me
@@ -1395,7 +1542,7 @@ export class Room {
             submittedAction: this.nightActions.has(playerId),
 
             dayAbility: canDay ? { kind: daySpec.kind, prompt: daySpec.prompt } : null,
-            snipeChoices: canDay && daySpec.kind === DAY_ABILITY.SNIPE ? snipeChoices(this.config.roles) : null,
+            snipeChoices: canDay && daySpec.kind === DAY_ABILITY.SNIPE ? snipeChoices(this.candidatePool()) : null,
 
             startAction: needStart ? { kind: startSpec.kind, prompt: startSpec.prompt } : null,
             startTargets: needStart ? this.alivePlayers.filter((p) => p.id !== me.id).map((p) => p.id) : [],
@@ -1475,20 +1622,22 @@ export class Room {
       catalog: this.phase === PHASE.LOBBY ? roleCatalog() : null,
       recommend: this.phase === PHASE.LOBBY ? recommendCounts(this.players.size) : null,
       // 이번 판에 어떤 직업이 들어 있는지 (누가 뭔지는 알려주지 않는다).
-      // 대기실에서도 편성한 직업의 설명을 읽을 수 있어야 한다.
-      lineup:
-        this.config.showRoleList
-          ? [...new Set(this.config.roles)].map((id) => {
-              const r = getRole(id);
-              return {
-                id,
-                name: r?.name ?? id,
-                team: r?.team ?? null,
-                desc: r?.desc ?? '',
-                count: this.config.roles.filter((x) => x === id).length,
-              };
-            })
-          : null,
+      // hiddenLineup 이 켜져 있으면 게임이 끝날 때까지 아무에게도 보여주지 않는다.
+      lineup: (() => {
+        if (!this.config.showRoleList || this.lineupHidden) return null;
+        const src = this.composition;
+        if (!src.length) return null;
+        return [...new Set(src)].map((id) => {
+          const r = getRole(id);
+          return {
+            id,
+            name: r?.name ?? id,
+            team: r?.team ?? null,
+            desc: r?.desc ?? '',
+            count: src.filter((x) => x === id).length,
+          };
+        });
+      })(),
     };
   }
 }

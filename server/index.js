@@ -354,12 +354,14 @@ io.on('connection', (socket) => {
     if (room.phase !== PHASE.LOBBY && room.phase !== PHASE.SEATING) {
       return cb?.({ ok: false, error: '게임 중에는 설정을 바꿀 수 없습니다.' });
     }
-    const allowed = ['roles', 'discussSeconds', 'voteSeconds', 'nightSeconds', 'adjacencySkipsDead', 'tieMeansNoExecution', 'maxDays', 'maxDaysWinner', 'mafiaSharedKill', 'strictNeutralElimination', 'autoAdvance', 'showRoleList', 'openVoting'];
+    const allowed = ['roles', 'discussSeconds', 'voteSeconds', 'nightSeconds', 'adjacencySkipsDead', 'tieMeansNoExecution', 'maxDays', 'maxDaysWinner', 'mafiaSharedKill', 'strictNeutralElimination', 'autoAdvance', 'showRoleList', 'openVoting',
+      'compositionMode', 'teamCounts', 'hiddenLineup'];
     // 직업 배정을 편성표 순서대로 고정하는 테스트 전용 스위치
     if (process.env.MAFIA_TEST_HOOKS === '1') allowed.push('deterministicRoles');
     for (const [k, v] of Object.entries(patch || {})) {
       if (allowed.includes(k)) room.config[k] = v;
     }
+    room.normalizeConfig();
     cb?.({ ok: true, validation: room.validateConfig() });
     pushState(room);
   });

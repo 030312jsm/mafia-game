@@ -248,11 +248,14 @@ export const ROLES = {
     },
   }),
 
+  // 임시로 편성에서 제외했다. 규칙 자체는 그대로 살아 있으므로
+  // selectable 을 true 로 되돌리고 MAFIA_POOL 에 다시 넣기만 하면 부활한다.
   rigger: R({
     id: 'rigger',
     name: '부정선거자',
     team: TEAM.MAFIA,
     implemented: true,
+    selectable: false,
     unique: true,
     voteImmune: true,
     desc: '투표로는 죽지 않는다. 밤의 살해 능력은 1회 충전식이며, 투표에서 본인이 다수결로 지정되면 다시 충전된다.',
@@ -386,7 +389,8 @@ export const ROLE_LIST = Object.values(ROLES);
 export const TRIPLET_IDS = ['triplet_mafia', 'triplet_citizen', 'triplet_neutral'];
 
 // 자동 편성이 고르는 순서. 앞쪽일수록 먼저 들어간다.
-export const MAFIA_POOL = ['sniper', 'rigger', 'chairman', 'independent_mafia', 'triplet_mafia'];
+// 부정선거자(rigger)는 임시 제외 상태라 풀에서 빠져 있다
+export const MAFIA_POOL = ['sniper', 'chairman', 'independent_mafia', 'triplet_mafia'];
 export const CITIZEN_POOL = [
   'police', 'guardian', 'detective', 'soldier', 'gymrat',
   'reporter', 'politician', 'lunatic', 'independent_citizen', 'triplet_citizen',
