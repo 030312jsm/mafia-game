@@ -17,7 +17,7 @@ const shuffle = (a) => {
 
 const MAFIA_SPECIALS = ['sniper', 'chairman', 'independent_mafia'];
 const CITIZEN_SPECIALS = [
-  'police', 'guardian', 'detective', 'gymrat', 'soldier',
+  'police', 'guardian', 'detective', 'gymrat', 'soldier', 'reflector',
   'politician', 'reporter', 'independent_citizen', 'lunatic',
 ];
 const NEUTRAL_SPECIALS = ['jindo', 'attention', 'serial_killer', 'clown'];

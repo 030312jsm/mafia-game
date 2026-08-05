@@ -81,6 +81,7 @@
     guardian: '🛡️', 수호자: '🛡️',
     detective: '🔍', 탐정: '🔍',
     gymrat: '💪', 헬창: '💪',
+    reflector: '🥋', 호신술사: '🥋',
     soldier: '🔫', 군인: '🔫',
     politician: '🏛️', 정치인: '🏛️',
     reporter: '📰', 기자: '📰',
@@ -245,14 +246,27 @@
         </div>
       </div>
 
-      ${inGame && myRole ? `
-        <div class="mybar ${you.alive ? '' : 'is-dead'}">
-          <span class="mybar-icon">${icon(myRole.id)}</span>
-          <span class="mybar-name">${esc(myRole.name)}</span>
-          <span class="rteam team-${myRole.team}">${TEAM_LABEL[myRole.team]}</span>
-          ${you.seat ? `<span class="mybar-seat">${you.seat}번</span>` : ''}
-          ${you.alive ? '' : '<span class="mybar-dead">사망 · 관전</span>'}
-        </div>` : ''}
+      ${inGame && myRole ? (() => {
+        // 직업 확인 단계에서는 본인이 직접 누르기 전까지 상단 바도 가린다.
+        // 카드만 흐리게 해봐야 여기에 그대로 적혀 있으면 의미가 없다.
+        const masked = room.phase === 'ROLE_REVEAL' && !revealed;
+        if (masked) {
+          return `
+            <div class="mybar is-masked">
+              <span class="mybar-icon">❔</span>
+              <span class="mybar-name">직업 확인 전</span>
+              ${you.seat ? `<span class="mybar-seat">${you.seat}번</span>` : ''}
+            </div>`;
+        }
+        return `
+          <div class="mybar ${you.alive ? '' : 'is-dead'}">
+            <span class="mybar-icon">${icon(myRole.id)}</span>
+            <span class="mybar-name">${esc(myRole.name)}</span>
+            <span class="rteam team-${myRole.team}">${TEAM_LABEL[myRole.team]}</span>
+            ${you.seat ? `<span class="mybar-seat">${you.seat}번</span>` : ''}
+            ${you.alive ? '' : '<span class="mybar-dead">사망 · 관전</span>'}
+          </div>`;
+      })() : ''}
       ${room.phase === 'LOBBY' ? `
         <div class="segbar">
           <button class="${lobbyTab === 'players' ? 'on' : ''}" data-action="lobby-tab" data-tab="players">
@@ -698,21 +712,33 @@
         </div>
       </div>` : '';
 
+    // 확인 전에는 실제 직업을 화면에 그리지 않는다.
+    // 흐림 처리만 해두면 화면에는 안 보여도 값 자체는 남아 있어서 가린 게 아니다.
+    const card = revealed
+      ? `<div>
+           <div class="ricon">${icon(you.role.id)}</div>
+           <div class="rname">${esc(you.role.name)}</div>
+           <div class="rteam team-${you.role.team}">${TEAM_LABEL[you.role.team]}</div>
+           <div class="rdesc">${esc(you.role.desc)}</div>
+         </div>`
+      : `<div class="hidden-role" aria-hidden="true">
+           <div class="ricon">❔</div>
+           <div class="rname">＊＊＊</div>
+           <div class="rteam team-CITIZEN">＊＊</div>
+           <div class="rdesc">＊＊＊＊＊ ＊＊＊＊＊＊＊＊ ＊＊＊＊＊＊ ＊＊＊＊＊＊＊＊＊＊ ＊＊＊＊＊＊＊.</div>
+         </div>`;
+
     return `
       <div class="card role-card">
-        <div class="${revealed ? '' : 'hidden-role'}">
-          <div class="ricon">${icon(you.role.id)}</div>
-          <div class="rname">${esc(you.role.name)}</div>
-          <div class="rteam team-${you.role.team}">${TEAM_LABEL[you.role.team]}</div>
-          <div class="rdesc">${esc(you.role.desc)}</div>
-        </div>
+        ${card}
         ${!revealed ? `<button class="btn btn-primary" data-action="reveal" style="margin-top:16px">
           내 직업 보기 (주변 조심)</button>` : ''}
       </div>
       ${revealed ? tripletNote : ''}
-      ${startBlock}
+      ${revealed ? startBlock : ''}
       <div class="card small dim">
         자리: <b>${you.seat}번</b> · 화면을 남에게 보이지 마세요.
+        ${!revealed ? '<br/>버튼을 누르면 직업이 나타납니다.' : ''}
         ${startPending ? `<br/>아직 시작 능력을 사용하지 않은 사람이 ${startPending}명 있습니다.` : ''}
       </div>`;
   }

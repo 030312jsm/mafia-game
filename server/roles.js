@@ -160,6 +160,15 @@ export const ROLES = {
     },
   }),
 
+  reflector: R({
+    id: 'reflector',
+    name: '호신술사',
+    team: TEAM.CITIZEN,
+    implemented: true,
+    unique: true,
+    desc: '게임 중 딱 한 번, 밤에 자신을 노린 살해를 그대로 되받아쳐 공격한 사람을 대신 죽인다. 따로 지목할 필요 없이 공격받는 순간 자동으로 발동하고, 그 뒤로는 평범한 시민이 된다.',
+  }),
+
   politician: R({
     id: 'politician',
     name: '정치인',
@@ -392,7 +401,7 @@ export const TRIPLET_IDS = ['triplet_mafia', 'triplet_citizen', 'triplet_neutral
 // 부정선거자(rigger)는 임시 제외 상태라 풀에서 빠져 있다
 export const MAFIA_POOL = ['sniper', 'chairman', 'independent_mafia', 'triplet_mafia'];
 export const CITIZEN_POOL = [
-  'police', 'guardian', 'detective', 'soldier', 'gymrat',
+  'police', 'guardian', 'detective', 'soldier', 'gymrat', 'reflector',
   'reporter', 'politician', 'lunatic', 'independent_citizen', 'triplet_citizen',
 ];
 export const NEUTRAL_POOL = ['jindo', 'clown', 'attention', 'serial_killer', 'triplet_neutral'];

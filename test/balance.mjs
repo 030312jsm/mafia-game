@@ -89,7 +89,8 @@ async function playOne(n, roles) {
     }
 
     const cfg = await host.emit('host:config', {
-      patch: { roles, nightSeconds: 25, discussSeconds: 25, voteSeconds: 25 },
+      // 편성을 정확히 지정해야 비교가 되므로 수동 편성으로 고정한다
+      patch: { compositionMode: 'manual', roles, nightSeconds: 25, discussSeconds: 25, voteSeconds: 25 },
     });
     if (!cfg.validation?.ok) throw new Error(`편성 오류: ${cfg.validation?.errors.join(' / ')}`);
 

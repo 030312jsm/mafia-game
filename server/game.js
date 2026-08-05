@@ -968,8 +968,33 @@ export class Room {
       this.tell(c.byId, `${this.label(target)} 을(를) 포섭했습니다.`);
     }
 
-    // 사망 확정
-    const intents = killIntents.filter((k) => !protectedIds.has(k.playerId)).concat(policeKills);
+    // 호신술사의 되받아치기.
+    // 수호자에게 보호받아 살해 자체가 무산됐으면 발동하지 않는다(= 소모되지 않는다).
+    const surviving = killIntents.filter((k) => !protectedIds.has(k.playerId));
+    const reflectedBy = new Set();   // 이번 밤에 반사를 발동한 사람
+    const reflectKills = [];
+    for (const k of surviving) {
+      const target = this.players.get(k.playerId);
+      if (!target || this.trueRole(target)?.id !== 'reflector') continue;
+      if (target.rs.used.reflect) continue;
+      reflectedBy.add(target.id);
+      if (k.byId && k.byId !== target.id) {
+        reflectKills.push({ playerId: k.byId, cause: 'REFLECT', byId: target.id });
+      }
+    }
+    for (const id of reflectedBy) {
+      const p = this.players.get(id);
+      p.rs.used.reflect = true;
+      this.tell(id, '누군가 당신을 죽이려 했지만 그대로 되돌려주었습니다. 이 능력은 한 번뿐입니다.');
+    }
+    for (const rk of reflectKills) {
+      this.tell(rk.playerId, '공격이 그대로 되돌아왔습니다.');
+    }
+
+    // 사망 확정 (반사에 막힌 대상은 죽지 않는다)
+    const intents = surviving
+      .filter((k) => !reflectedBy.has(k.playerId))
+      .concat(reflectKills, policeKills);
     const { deaths, blocked: survived } = this.applyDeaths(intents);
 
     this.gunshotThisNight = gunshot;

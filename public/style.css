@@ -267,6 +267,8 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
   border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line);
 }
 .mybar.is-dead { opacity: .5; }
+.mybar.is-masked { border-style: dashed; }
+.mybar.is-masked .mybar-name { color: var(--fg-dim); font-weight: 600; }
 .mybar-icon { font-size: 22px; line-height: 1; }
 .mybar-name { font-weight: 700; font-size: 16px; }
 .mybar .rteam { margin: 0; padding: 2px 9px; font-size: 11px; }

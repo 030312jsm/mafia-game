@@ -103,8 +103,12 @@ async function setup(roles, extraConfig = {}) {
       await sleep(500);
     },
     vote: (i, targetIdx) => c[i].emit('vote:cast', { targetId: c[targetIdx].id }),
-    /** 아직 밤 행동을 안 한 사람들을 전부 「사용 안 함」으로 넘긴다 */
+    /**
+     * 아직 밤 행동을 안 한 사람들을 전부 「사용 안 함」으로 넘긴다.
+     * 앞선 지목의 상태가 도착하기 전에 훑으면 그 지목을 pass 로 덮어쓰므로 먼저 기다린다.
+     */
     passRest: async () => {
+      await sleep(350);
       for (let i = 0; i < n; i++) {
         const y = c[i].state.you;
         if (y.canAct && !y.submittedAction) await c[i].emit('night:action', { targetId: null });
@@ -361,6 +365,65 @@ const run = async () => {
     check('본인은 정신병자인 줄 모름', shown.name !== '정신병자', shown.name);
     check('위장 직업이 편성표 안에 있음', inPlayCitizens.includes(shown.name), shown.name);
     check('위장 직업은 시민 진영', shown.team === 'CITIZEN');
+    g.close();
+  }
+
+  // ── 호신술사: 살해 되받아치기 ───────────────────────────────
+  {
+    head('호신술사 — 자신을 노린 살해를 되받아친다 (1회)');
+    // 자리 1번 마피아, 2번 호신술사 (양옆이라 지목 가능)
+    const g = await setup(['mafia', 'reflector', 'police', 'guardian', 'detective', 'soldier']);
+    await g.toNight();
+    await g.act(0, { targetId: g.id(1) });   // 마피아가 호신술사를 공격
+    await g.passRest();
+    await g.dawn();
+
+    check('호신술사 생존', g.alive(1));
+    check('공격한 마피아가 대신 사망', !g.alive(0));
+    check('사망 원인이 반사로 기록',
+      g.c[2].state.deaths.some((d) => d.cause === 'REFLECT'),
+      JSON.stringify(g.c[2].state.deaths.map((d) => d.cause)));
+    check('호신술사에게 안내', g.info(1).includes('되돌려주었습니다'), g.info(1));
+    check('공격자에게도 안내', g.info(0).includes('되돌아왔습니다'), g.info(0));
+    g.close();
+  }
+
+  {
+    head('호신술사 — 두 번째 공격은 막지 못한다');
+    const g = await setup(['mafia', 'reflector', 'police', 'guardian', 'detective', 'soldier']);
+    // 1일차는 군인이 쏘게 한다. 마피아가 반사로 죽어버리면 게임이 그 자리에서 끝나버린다.
+    await g.toNight();
+    await g.act(5, { targetId: g.id(1) });
+    await g.passRest();
+    await g.dawn();
+    check('1일차 반사 성공 — 쏜 군인이 죽음', g.alive(1) && !g.alive(5));
+
+    await g.next();                           // 토론
+    await g.next();                           // 투표
+    await g.abstainAll();
+    await g.execution();
+    await g.next();                           // 2일차 밤
+    await sleep(500);
+    await g.act(0, { targetId: g.id(1) });    // 이번엔 마피아가 공격
+    await g.passRest();
+    await g.dawn();
+    check('두 번째 공격에는 사망', !g.alive(1), `alive=${g.alive(1)}`);
+    check('공격한 마피아는 생존', g.alive(0));
+    g.close();
+  }
+
+  {
+    head('호신술사 — 수호자에게 보호받으면 반사가 소모되지 않는다');
+    const g = await setup(['mafia', 'reflector', 'police', 'guardian', 'detective', 'soldier']);
+    await g.toNight();
+    await g.act(0, { targetId: g.id(1) });   // 마피아 공격
+    await g.act(3, { targetId: g.id(1) });   // 수호자가 호신술사를 보호
+    await g.passRest();
+    await g.dawn();
+    check('아무도 죽지 않음', g.c[2].state.deaths.length === 0,
+      JSON.stringify(g.c[2].state.deaths.map((d) => `${d.seat}번`)));
+    check('마피아 생존 (반사 발동 안 함)', g.alive(0));
+    check('반사 소모 안내가 없음', !g.info(1).includes('되돌려주었습니다'), g.info(1) || '(정보 없음)');
     g.close();
   }
 
