@@ -3,7 +3,24 @@
 폰으로 QR 을 찍어 들어오려면 인터넷에서 접근 가능한 주소가 필요하다.
 아래 순서대로 하면 된다. **아이디·비밀번호가 필요한 단계는 직접 해야 한다.**
 
-로컬 git 저장소와 첫 커밋은 이미 만들어져 있다. `git log` 로 확인할 수 있다.
+## 지금 상태
+
+| 항목 | 상태 |
+|---|---|
+| 로컬 git 저장소 | ✅ 준비됨 (커밋 2개, 브랜치 `master`) |
+| `render.yaml` | ✅ 준비됨 |
+| `npm ci --omit=dev` | ✅ 검증됨 (lock 파일 동기화 확인) |
+| 운영 모드 부팅 | ✅ 검증됨 (`/healthz` 응답, 정적 파일 200) |
+| `PUBLIC_URL` 기반 QR | ✅ 검증됨 |
+| 배포 후 캐시 무효화 | ✅ 적용됨 (아래 참고) |
+| GitHub 원격 | ❌ **직접 설정 필요** |
+
+`gh` CLI 가 설치되어 있지 않고 GitHub 로그인 정보도 없어서, 저장소 생성과 push 는
+직접 해야 한다. 아래 절차대로 하면 된다.
+
+> **캐시 무효화에 대해.** 정적 파일은 1시간 캐시되지만 `index.html` 은 캐시하지 않고
+> 그 안의 `app.js` / `style.css` 주소에 `?v=<빌드값>` 을 붙여 내보낸다. 빌드값은 파일
+> 수정 시각에서 나오므로, 배포하면 주소가 바뀌어 이용자가 옛 화면을 보는 일이 없다.
 
 ---
 
@@ -20,9 +37,18 @@ https://github.com/new 에서 저장소를 하나 만든다.
 
 ```bash
 git remote add origin https://github.com/<사용자명>/<저장소명>.git
+```
+
+```bash
 git branch -M main
+```
+
+```bash
 git push -u origin main
 ```
+
+push 할 때 GitHub 로그인 창이 뜬다. 비밀번호가 아니라 **Personal Access Token** 을
+요구하면 https://github.com/settings/tokens 에서 `repo` 권한으로 하나 만들어 쓰면 된다.
 
 ## 2. Render 에 올리기
 
