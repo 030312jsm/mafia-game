@@ -24,7 +24,10 @@
   let snipeTarget = null;       // 저격수: 대상
   let snipeRole = null;         // 저격수: 직업 추측
   let dayPanel = null;          // 'SNIPE' | 'FORCE_VOTE' | null
-  let lineupOpen = false;       // 직업 라인업 펼침 상태
+  let drawerOpen = false;       // 오른쪽 직업 설명 탭
+  let drawerTab = 'roles';      // 'roles' | 'log'
+  let lobbyTab = 'players';     // 'players' | 'roles' | 'settings'
+  let rolePickerOpen = false;   // 편성 탭에서 전체 직업 목록 펼침
   let codeTaps = 0;             // 방 코드 연타로 개발자 옵션 열기
   const DEV_KEY = 'mafia.devMode';
   const isDev = () => localStorage.getItem(DEV_KEY) === '1';
@@ -60,6 +63,40 @@
   }
 
   const TEAM_LABEL = { MAFIA: '마피아', CITIZEN: '시민', NEUTRAL: '중립' };
+
+  // 직업 아이콘. id 로도, 이름으로도 찾을 수 있게 둘 다 넣어둔다.
+  // (남의 직업은 이름만 내려오는 경우가 있다)
+  const ROLE_ICONS = {
+    // 마피아
+    mafia: '🕴️', 마피아: '🕴️',
+    sniper: '🎯', 저격수: '🎯',
+    rigger: '🗳️', 부정선거자: '🗳️',
+    chairman: '💼', 회장: '💼',
+    independent_mafia: '🏴', '무소속당 (마피아)': '🏴',
+    triplet_mafia: '👶', '삼둥이 (마피아)': '👶',
+    converted_mafia: '🤝', '포섭된 마피아': '🤝',
+    // 시민
+    citizen: '🧍', 시민: '🧍',
+    police: '👮', 경찰: '👮',
+    guardian: '🛡️', 수호자: '🛡️',
+    detective: '🔍', 탐정: '🔍',
+    gymrat: '💪', 헬창: '💪',
+    soldier: '🔫', 군인: '🔫',
+    politician: '🏛️', 정치인: '🏛️',
+    reporter: '📰', 기자: '📰',
+    independent_citizen: '🏳️', '무소속당 (시민)': '🏳️',
+    lunatic: '🌀', 정신병자: '🌀',
+    triplet_citizen: '👶', '삼둥이 (시민)': '👶',
+    // 중립
+    jindo: '🐕', 진돗개: '🐕',
+    attention: '📣', 관종: '📣',
+    serial_killer: '🔪', 연쇄살인마: '🔪',
+    clown: '🤡', 삐에로: '🤡',
+    triplet_neutral: '👶', '삼둥이 (셋째)': '👶',
+    // 형제끼리는 순번 없이 「삼둥이」로만 보인다
+    삼둥이: '👶',
+  };
+  const icon = (key) => ROLE_ICONS[key] || '❔';
   const PHASE_LABEL = {
     LOBBY: '대기실', SEATING: '자리 정하기', ROLE_REVEAL: '직업 확인',
     NIGHT: '밤', DAWN: '아침', DISCUSS: '토론', VOTE: '투표',
@@ -127,6 +164,13 @@
   });
 
   // ── 렌더 ───────────────────────────────────────────────────
+  /** 헤더 / 본문 / 하단을 고정하고 본문만 스크롤시킨다 */
+  const shell = (head, main, foot, extra = '') => `
+    ${head ? `<div class="app-head">${head}</div>` : ''}
+    <div class="app-main">${main}</div>
+    ${foot ? `<div class="app-foot">${foot}</div>` : ''}
+    ${extra}`;
+
   function render() {
     $app.innerHTML = screen === 'home' ? viewHome() : viewRoom();
     maybeShowGate();
@@ -139,8 +183,12 @@
 
   // ── 홈 ─────────────────────────────────────────────────────
   function viewHome() {
+    return shell('', viewHomeBody(), '');
+  }
+
+  function viewHomeBody() {
     return `
-      <div style="padding-top:12vh">
+      <div style="padding-top:10vh">
         <h1 class="center">마피아</h1>
         <p class="center dim small" style="margin-bottom:26px">
           둥글게 앉아서 하는 오프라인 마피아<br/>한쪽 이어폰을 끼고 진행하세요
@@ -180,43 +228,103 @@
       VOTE: viewVote, EXECUTION: viewExecution, END: viewEnd,
     }[room.phase] || (() => '');
 
-    return `
+    const inGame = !['LOBBY', 'SEATING'].includes(room.phase);
+    const aliveCount = S.players.filter((p) => p.alive).length;
+    const myRole = you?.role;
+
+    const head = `
       <div class="topbar">
         <div data-action="code-tap" style="cursor:pointer">
           <div class="code mono">${esc(room.code)}</div>
-          <div class="small dim">${room.playerCount}명 ${room.day ? `· ${room.day}일차` : ''}</div>
+          <div class="small dim">${inGame ? `${room.day}일차 · 생존 ${aliveCount}/${room.playerCount}`
+                                          : `${room.playerCount}명`}</div>
         </div>
         <div class="center">
           <span class="phase-pill phase-${room.phase}">${PHASE_LABEL[room.phase] || room.phase}</span>
           ${room.deadline ? `<div class="timer" data-timer>${fmtLeft(room.deadline)}</div>` : ''}
         </div>
       </div>
-      ${!you?.alive && room.phase !== 'LOBBY' && room.phase !== 'SEATING' && room.phase !== 'END'
-        ? `<div class="card center" style="border-color:#5a2733;background:#1a1013">
-             <b>사망</b> <span class="dim small">— 관전 중입니다. 말하지 마세요.</span>
-           </div>` : ''}
-      ${body()}
-      ${viewInfoLog()}
-      ${viewLineup()}
-      ${viewPublicLog()}
-      <div class="sticky-actions">${viewHostControls()}</div>
-      <p class="center small dim" style="margin-top:14px">
+
+      ${inGame && myRole ? `
+        <div class="mybar ${you.alive ? '' : 'is-dead'}">
+          <span class="mybar-icon">${icon(myRole.id)}</span>
+          <span class="mybar-name">${esc(myRole.name)}</span>
+          <span class="rteam team-${myRole.team}">${TEAM_LABEL[myRole.team]}</span>
+          ${you.seat ? `<span class="mybar-seat">${you.seat}번</span>` : ''}
+          ${you.alive ? '' : '<span class="mybar-dead">사망 · 관전</span>'}
+        </div>` : ''}
+      ${room.phase === 'LOBBY' ? `
+        <div class="segbar">
+          <button class="${lobbyTab === 'players' ? 'on' : ''}" data-action="lobby-tab" data-tab="players">
+            참가자 ${room.playerCount}</button>
+          ${you?.isHost ? `
+            <button class="${lobbyTab === 'roles' ? 'on' : ''}" data-action="lobby-tab" data-tab="roles">
+              편성 ${room.config.roles.length}/${room.playerCount}</button>
+            <button class="${lobbyTab === 'settings' ? 'on' : ''}" data-action="lobby-tab" data-tab="settings">
+              설정</button>` : ''}
+        </div>` : ''}`;
+
+    const foot = `
+      ${viewHostControls()}
+      <p class="foot-links dim">
         <a href="#" data-action="leave" class="dim">방 나가기</a>
         · <a href="#" data-action="mute" class="dim">${Narrator.isMuted() ? '소리 켜기' : '소리 끄기'}</a>
       </p>`;
+
+    return shell(head, `${body()}${viewInfoLog()}`, foot, viewDrawer());
+  }
+
+  /** 오른쪽에서 열리는 참고 탭 — 직업 설명과 기록을 여기에 몰아넣는다 */
+  function viewDrawer() {
+    const inLobby = S?.room?.phase === 'LOBBY';
+    // 대기실에서는 전체 직업 도감을, 게임 중에는 이번 판 라인업을 보여준다
+    const hasLineup = inLobby ? !!S?.catalog?.length : !!S?.lineup?.length;
+    const hasLog = !inLobby && !!S?.publicLog?.length;
+    if (!hasLineup && !hasLog) return '';
+
+    const tab = (!hasLineup && drawerTab === 'roles') ? 'log' : drawerTab;
+    return `
+      <button class="drawer-tab" data-action="open-drawer" aria-label="직업 설명 열기">
+        <span>📖</span><span class="drawer-tab-label">${inLobby ? '도감' : '직업'}</span>
+      </button>
+      <div class="drawer-scrim ${drawerOpen ? 'on' : ''}" data-action="close-drawer"></div>
+      <aside class="drawer ${drawerOpen ? 'on' : ''}">
+        <div class="drawer-head">
+          <div class="drawer-tabs">
+            ${hasLineup ? `<button class="${tab === 'roles' ? 'on' : ''}"
+              data-action="drawer-tab" data-tab="roles">직업</button>` : ''}
+            ${hasLog ? `<button class="${tab === 'log' ? 'on' : ''}"
+              data-action="drawer-tab" data-tab="log">기록</button>` : ''}
+          </div>
+          <button class="drawer-close" data-action="close-drawer" aria-label="닫기">✕</button>
+        </div>
+        <div class="drawer-body">
+          ${tab === 'roles' ? (inLobby ? viewRoleBook() : viewLineup()) : viewPublicLog()}
+        </div>
+      </aside>`;
   }
 
   function viewLobby() {
-    const { room, you, players } = S;
+    const { room, you } = S;
     const isHost = you?.isHost;
     const counts = {};
     for (const r of room.config.roles) counts[r] = (counts[r] || 0) + 1;
 
+    // 방장이 아니면 탭이 없으므로 참가자 화면만 보여준다
+    const tab = isHost ? lobbyTab : 'players';
+    if (tab === 'roles') return viewRoleSetup(counts) + viewRolePicker();
+    if (tab === 'settings') return viewLobbySettings();
+    return viewLobbyPlayers();
+  }
+
+  function viewLobbyPlayers() {
+    const { room, you, players } = S;
+    const isHost = you?.isHost;
     return `
       ${isHost && room.qr ? `
         <div class="card qr-wrap">
           <img src="${room.qr}" alt="방 입장 QR" />
-          <div class="small dim">이 QR을 다른 사람이 카메라로 찍으면 바로 입장합니다</div>
+          <div class="small dim">이 QR을 찍으면 바로 입장합니다</div>
         </div>` : ''}
 
       <div class="card">
@@ -245,14 +353,10 @@
                                  style="flex:1;margin:0">−1</button>` : ''}
           </div>
           <p class="small dim" style="margin:8px 0 0">
-            봇은 자리 선택·밤 능력·투표를 알아서 합니다. 혼자서 규칙을 확인할 때 쓰세요.
-            페이즈 넘기기는 방장인 당신이 직접 해야 합니다.
+            봇은 자리 선택·밤 능력·투표를 알아서 합니다. 혼자 규칙을 확인할 때 쓰세요.
           </p>` : ''}
       </div>
-
-      ${viewRolePicker()}
-
-      ${isHost ? viewRoleSetup(counts) : `
+      ${isHost ? '' : `
         <div class="card center dim small">방장이 직업을 편성하고 있습니다. 잠시만 기다려 주세요.</div>`}
     `;
   }
@@ -276,7 +380,7 @@
       const on = mine === r.id;
       return `<button class="rolechip ${on ? 'on' : ''} ${tried.has(r.id) ? 'done' : ''}"
         data-action="pin-role" data-id="${r.id}" ${locked ? 'disabled' : ''}
-        title="${esc(r.desc)}">${tried.has(r.id) ? '✓ ' : ''}${esc(r.name)}${
+        title="${esc(r.desc)}">${icon(r.id)} ${tried.has(r.id) ? '✓ ' : ''}${esc(r.name)}${
           locked ? ` <span class="dim">${r.minPlayers}인+</span>` : ''}</button>`;
     };
 
@@ -324,7 +428,7 @@
       const locked = !r.implemented || (r.minPlayers > n);
       return `
         <div class="rolerow ${locked ? 'off' : ''}">
-          <div class="rn">${esc(r.name)}
+          <div class="rn">${icon(r.id)} ${esc(r.name)}
             ${!r.implemented ? '<span class="badge">준비중</span>' : ''}
             ${r.minPlayers > 0 ? `<span class="badge">${r.minPlayers}인+</span>` : ''}
           </div>
@@ -338,28 +442,49 @@
     }).join('');
 
     const v = validateLocal();
+    const chosen = Object.entries(counts).filter(([, c]) => c > 0);
 
     return `
       <div class="card">
         <div class="spread">
-          <h2 style="margin:0">직업 편성 <span class="dim small">${total} / ${n}</span></h2>
-          <button class="btn btn-sm" data-action="auto-roles">자동 편성</button>
+          <h2 style="margin:0">편성 <span class="dim small">${total} / ${n}</span></h2>
+          <button class="btn btn-sm" data-action="auto-roles" style="margin:0">자동 편성</button>
         </div>
-        <div class="small" style="margin:6px 0 12px">
-          <span class="dim">현재</span>
+        <div class="small" style="margin:6px 0 10px">
           <b class="${teamCount.MAFIA === rec.mafia ? '' : 'off-rec'}">마피아 ${teamCount.MAFIA}</b> ·
           <b class="${teamCount.CITIZEN === rec.citizen ? '' : 'off-rec'}">시민 ${teamCount.CITIZEN}</b> ·
           <b class="${teamCount.NEUTRAL === rec.neutral ? '' : 'off-rec'}">중립 ${teamCount.NEUTRAL}</b>
-          <div class="dim" style="margin-top:3px">
-            ${n}인 권장 — 마피아 ${rec.mafia} · 시민 ${rec.citizen} · 중립 ${rec.neutral}
-          </div>
+          <span class="dim"> · ${n}인 권장 ${rec.mafia}/${rec.citizen}/${rec.neutral}</span>
         </div>
 
-        <h3>마피아</h3>${rowsFor('MAFIA')}
-        <h3>시민</h3>${rowsFor('CITIZEN')}
-        <h3>중립</h3>${rowsFor('NEUTRAL')}
+        <div class="chips">
+          ${chosen.length
+            ? chosen.map(([id, c]) => {
+                const r = (catalog || []).find((x) => x.id === id);
+                return `<button class="rolechip on" data-action="role-dec" data-role="${id}"
+                  title="눌러서 빼기">${icon(id)} ${esc(r?.name ?? id)}${c > 1 ? ` ×${c}` : ''} ✕</button>`;
+              }).join('')
+            : '<span class="small dim">아직 아무 직업도 없습니다.</span>'}
+        </div>
+
+        <button class="btn btn-sm btn-ghost" data-action="toggle-picker" style="margin-top:10px">
+          ${rolePickerOpen ? '직업 목록 접기' : '＋ 직업 추가'}
+        </button>
+
+        ${rolePickerOpen ? `
+          <h3>마피아</h3>${rowsFor('MAFIA')}
+          <h3>시민</h3>${rowsFor('CITIZEN')}
+          <h3>중립</h3>${rowsFor('NEUTRAL')}` : ''}
       </div>
 
+      ${v.errors.length ? `<div class="card errors">${v.errors.map((e) => `<div>· ${esc(e)}</div>`).join('')}</div>` : ''}
+    `;
+  }
+
+  /** 대기실 「설정」 탭 */
+  function viewLobbySettings() {
+    const { room } = S;
+    return `
       <div class="card">
         <h2>진행 설정</h2>
         <div class="row" style="margin-bottom:10px">
@@ -389,6 +514,11 @@
           <span>자동 진행 — 방장이 버튼을 누르지 않아도 단계가 넘어감 (혼자 테스트할 때)</span>
         </label>
         <label class="row small" style="margin-bottom:8px">
+          <input type="checkbox" id="cfg-open" ${room.config.openVoting ? 'checked' : ''}
+                 style="width:auto;margin:0" />
+          <span>공개 투표 — 투표 중에도 누가 누구에게 몇 표를 줬는지 보임</span>
+        </label>
+        <label class="row small" style="margin-bottom:8px">
           <input type="checkbox" id="cfg-lineup" ${room.config.showRoleList ? 'checked' : ''}
                  style="width:auto;margin:0" />
           <span>게임 중 이번 판 직업 목록과 능력 설명 보기</span>
@@ -414,10 +544,7 @@
           <span>중립을 전원 제거해야 진영 승리 (끄면 연쇄살인마만 승리를 막음)</span>
         </label>
         <button class="btn btn-sm" data-action="save-cfg" style="margin-top:12px">설정 저장</button>
-      </div>
-
-      ${v.errors.length ? `<div class="card errors">${v.errors.map((e) => `<div>· ${esc(e)}</div>`).join('')}</div>` : ''}
-    `;
+      </div>`;
   }
 
   function validateLocal() {
@@ -499,6 +626,7 @@
     return `
       <div class="card role-card">
         <div class="${revealed ? '' : 'hidden-role'}">
+          <div class="ricon">${icon(you.role.id)}</div>
           <div class="rname">${esc(you.role.name)}</div>
           <div class="rteam team-${you.role.team}">${TEAM_LABEL[you.role.team]}</div>
           <div class="rdesc">${esc(you.role.desc)}</div>
@@ -646,25 +774,50 @@
   function viewVote() {
     const { you, players, vote } = S;
     const canVote = you?.alive;
+    const tally = vote.tally || {};
+    const byTarget = {};
+    for (const b of vote.ballots || []) {
+      if (b.targetId === 'ABSTAIN') continue;
+      (byTarget[b.targetId] ||= []).push(b.voterId);
+    }
+    const nameOf = (id) => {
+      const p = players.find((x) => x.id === id);
+      return p ? `${p.seat}번 ${esc(p.nickname)}` : '?';
+    };
+    const top = Math.max(0, ...Object.values(tally));
+
     return `
       <div class="card">
         <div class="spread">
           <h2 style="margin:0">투표</h2>
-          <span class="small dim">${vote.votedCount} / ${vote.totalVoters} 투표</span>
+          <span class="small dim">${vote.votedCount} / ${vote.totalVoters} 투표${
+            vote.open && vote.abstain ? ` · 기권 ${vote.abstain}` : ''}</span>
         </div>
         <p class="small dim">처형할 사람을 고르세요.</p>
         <div class="plist" style="margin-top:10px">
-          ${players.map((p) => `
-            <div class="pitem ${p.alive ? '' : 'dead'} ${you?.votedFor === p.id ? 'sel' : ''} ${canVote && p.alive ? '' : 'disabled'}"
+          ${players.map((p) => {
+            const n = tally[p.id] || 0;
+            const voters = byTarget[p.id] || [];
+            return `
+            <div class="pitem ${p.alive ? '' : 'dead'} ${you?.votedFor === p.id ? 'sel' : ''} ${canVote && p.alive ? '' : 'disabled'} ${n > 0 && n === top ? 'leading' : ''}"
                  ${canVote && p.alive ? `data-action="vote" data-id="${p.id}"` : ''}>
               <div class="seatno">${p.seat ?? '?'}</div>
-              <div class="name">${esc(p.nickname)}${p.isYou ? ' <span class="tag">(나)</span>' : ''}</div>
-              ${p.revealedRole ? `<span class="tag known">${esc(p.revealedRole)}</span>` : ''}
-              ${you?.votedFor === p.id ? '<span class="tag">내 표</span>' : ''}
-            </div>`).join('')}
+              <div class="vcol">
+                <div class="vrow">
+                  <span class="name">${esc(p.nickname)}${p.isYou ? ' <span class="tag">(나)</span>' : ''}</span>
+                  ${p.revealedRole
+                    ? `<span class="tag known">${icon(p.revealedRole)} ${esc(p.revealedRole)}</span>` : ''}
+                </div>
+                ${voters.length
+                  ? `<div class="voters">← ${voters.map(nameOf).join(', ')}</div>` : ''}
+              </div>
+              ${n > 0 ? `<span class="votecount">${n}표</span>` : ''}
+            </div>`;
+          }).join('')}
         </div>
         ${canVote ? `<button class="btn btn-ghost ${you?.votedFor === 'ABSTAIN' ? 'btn-primary' : ''}"
-                       data-action="vote" data-id="ABSTAIN" style="margin-top:10px">기권</button>` : ''}
+                       data-action="vote" data-id="ABSTAIN" style="margin-top:10px">기권${
+                         vote.open && vote.abstain ? ` (${vote.abstain})` : ''}</button>` : ''}
       </div>
       ${viewDayAbility()}`;
   }
@@ -771,7 +924,7 @@
                 ${r.tripletOrder ? `<span class="tag">${['첫째', '둘째', '셋째'][r.tripletOrder - 1]}</span>` : ''}
                 ${r.fakeRoleName ? `<span class="tag">「${esc(r.fakeRoleName)}」인 줄 알았음</span>` : ''}
               </div>
-              <span class="rteam team-${r.team}" style="margin:0;padding:2px 9px;font-size:12px">${esc(r.roleName)}</span>
+              <span class="rteam team-${r.team}" style="margin:0;padding:2px 9px;font-size:12px">${icon(r.roleId)} ${esc(r.roleName)}</span>
             </div>`).join('')}
         </div>
       </div>`;
@@ -782,8 +935,10 @@
       <div class="pitem ${p.alive ? '' : 'dead'} ${p.isYou ? 'you' : ''}">
         <div class="seatno">${p.seat ?? '?'}</div>
         <div class="name">${esc(p.nickname)}${p.isYou ? ' <span class="tag">(나)</span>' : ''}</div>
-        ${p.revealedRole ? `<span class="tag">${esc(p.revealedRole)}</span>` : ''}
-        ${p.connected ? '' : '<span class="offline">오프라인</span>'}
+        ${p.revealedRole
+          ? `<span class="tag known">${icon(p.revealedRole)} ${esc(p.revealedRole)}</span>` : ''}
+        ${p.alive ? '' : '<span class="tag">사망</span>'}
+        ${p.connected || p.isBot ? '' : '<span class="offline">오프라인</span>'}
       </div>`;
   }
 
@@ -799,6 +954,37 @@
       </div>`;
   }
 
+  /** 대기실용 직업 도감 — 전체 직업 설명. 이번 판에 넣은 직업은 표시해 준다 */
+  function viewRoleBook() {
+    const { catalog, room } = S;
+    if (!catalog?.length) return '';
+    const counts = {};
+    for (const r of room.config.roles) counts[r] = (counts[r] || 0) + 1;
+    const usable = catalog.filter((r) => r.implemented);
+
+    const group = (team, label) => {
+      const rows = usable.filter((r) => r.team === team);
+      if (!rows.length) return '';
+      return `<h3>${label}</h3>` + rows.map((r) => `
+        <div class="lineup-row ${counts[r.id] ? '' : 'off'}">
+          <div class="lineup-head">
+            <span class="lineup-icon">${icon(r.id)}</span>
+            <b>${esc(r.name)}</b>
+            ${counts[r.id]
+              ? `<span class="tag known">이번 판 ${counts[r.id]}명</span>`
+              : '<span class="tag">미편성</span>'}
+          </div>
+          <div class="small dim lineup-desc">${esc(r.desc)}</div>
+        </div>`).join('');
+    };
+
+    return `
+      <p class="small dim" style="margin:0 0 10px">
+        전체 직업 설명입니다. 이번 판 편성에 들어간 직업은 「이번 판」으로 표시됩니다.
+      </p>
+      ${group('MAFIA', '마피아')}${group('CITIZEN', '시민')}${group('NEUTRAL', '중립')}`;
+  }
+
   /** 이번 판 직업 라인업과 각 능력 (누가 뭔지는 알려주지 않는다) */
   function viewLineup() {
     const lineup = S?.lineup;
@@ -806,35 +992,29 @@
     const group = (team, label) => {
       const rows = lineup.filter((r) => r.team === team);
       if (!rows.length) return '';
-      return `<h3>${label}</h3>` + rows.map((r) => `
+      return `<h3>${label} ${rows.reduce((a, r) => a + r.count, 0)}</h3>` + rows.map((r) => `
         <div class="lineup-row">
-          <div class="spread">
+          <div class="lineup-head">
+            <span class="lineup-icon">${icon(r.id)}</span>
             <b>${esc(r.name)}${r.count > 1 ? ` ×${r.count}` : ''}</b>
-            <span class="rteam team-${r.team}" style="margin:0;padding:1px 8px;font-size:11px">${TEAM_LABEL[r.team]}</span>
           </div>
-          <div class="small dim" style="margin-top:3px">${esc(r.desc)}</div>
+          <div class="small dim lineup-desc">${esc(r.desc)}</div>
         </div>`).join('');
     };
     return `
-      <details class="card" ${lineupOpen ? 'open' : ''}>
-        <summary data-action="toggle-lineup"><b>📋 이번 판 직업 (${lineup.reduce((a, r) => a + r.count, 0)}개)</b>
-          <span class="small dim"> — 누가 무엇인지는 알 수 없습니다</span></summary>
-        <div style="margin-top:8px">
-          ${group('MAFIA', '마피아')}${group('CITIZEN', '시민')}${group('NEUTRAL', '중립')}
-        </div>
-      </details>`;
+      <p class="small dim" style="margin:0 0 10px">
+        이번 판에 들어 있는 직업 ${lineup.reduce((a, r) => a + r.count, 0)}개입니다.
+        누가 무엇인지는 알 수 없습니다.
+      </p>
+      ${group('MAFIA', '마피아')}${group('CITIZEN', '시민')}${group('NEUTRAL', '중립')}`;
   }
 
   function viewPublicLog() {
     const log = S?.publicLog || [];
     if (!log.length) return '';
-    return `
-      <div class="card">
-        <h2>기록</h2>
-        <div class="log">
-          ${log.slice().reverse().map((l) => `<div>${esc(l.text)}</div>`).join('')}
-        </div>
-      </div>`;
+    return `<div class="log">
+      ${log.slice().reverse().map((l) => `<div>${esc(l.text)}</div>`).join('')}
+    </div>`;
   }
 
   function viewHostControls() {
@@ -949,7 +1129,11 @@
         render();
         break;
       }
-      case 'toggle-lineup': { lineupOpen = !lineupOpen; render(); break; }
+      case 'lobby-tab': { lobbyTab = t.dataset.tab; render(); break; }
+      case 'toggle-picker': { rolePickerOpen = !rolePickerOpen; render(); break; }
+      case 'open-drawer': { drawerOpen = true; render(); break; }
+      case 'close-drawer': { drawerOpen = false; render(); break; }
+      case 'drawer-tab': { drawerTab = t.dataset.tab; render(); break; }
       case 'pin-role': {
         const id = t.dataset.id || null;
         const res = await emit('role:pin', { roleId: id });
@@ -985,6 +1169,7 @@
           strictNeutralElimination: document.getElementById('cfg-strict').checked,
           autoAdvance: document.getElementById('cfg-auto').checked,
           showRoleList: document.getElementById('cfg-lineup').checked,
+          openVoting: document.getElementById('cfg-open').checked,
         };
         const res = await emit('host:config', { patch });
         toast(res.ok ? '설정을 저장했습니다.' : res.error);

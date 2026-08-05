@@ -116,14 +116,14 @@ export function decideDay(view) {
   if (!you.dayAbility) return null;
 
   if (you.dayAbility.kind === 'SNIPE') {
-    // 1일차부터 난사하면 게임이 성립하지 않는다. 정보가 쌓인 뒤에 가끔 쏜다.
-    if (view.room.day < 2 || !chance(0.35)) return null;
-    const pool = others(view);
+    // 직업을 모르는 채로 찍어서 쏘면 거의 빗나가고, 빗나가면 저격수 본인이 죽는다.
+    // 즉 근거 없는 저격은 그냥 자살이다. 확실히 아는 대상에게만 쏜다.
+    const pool = others(view).filter(
+      (p) => p.revealedRole && teamOfRoleName(p.revealedRole) !== TEAM.MAFIA
+    );
     if (!pool.length) return null;
-    const revealed = pool.filter((p) => p.revealedRole && teamOfRoleName(p.revealedRole) !== TEAM.MAFIA);
-    const target = revealed.length ? pick(revealed) : pick(pool);
-    const known = (you.snipeChoices || []).find((c) => c.name === target.revealedRole);
-    const guess = known ?? pick(you.snipeChoices || []);
+    const target = pick(pool);
+    const guess = (you.snipeChoices || []).find((c) => c.name === target.revealedRole);
     if (!guess) return null;
     return { kind: 'SNIPE', targetId: target.id, roleKey: guess.key };
   }
@@ -138,23 +138,46 @@ export function decideDay(view) {
   return null;
 }
 
+/**
+ * 그날의 「합의 점수」.
+ * 일차와 대상 id 만으로 정해지므로 모든 봇이 같은 값을 계산한다.
+ * 이걸로 정렬해 1위를 찍으면, 말을 하지 않고도 같은 사람에게 표가 모인다.
+ *
+ * 각자 무작위로 찍게 두면 표가 흩어져 동표가 나고 처형이 거의 일어나지 않는다.
+ * 그러면 마피아가 밤마다 한 명씩 줄여 이기는 결과만 나와서 밸런스 측정이 무의미해진다.
+ * 실제 사람은 토론으로 한 명에 의견을 모으므로, 그쪽에 가깝게 맞춘 것이다.
+ */
+function consensusScore(day, id) {
+  let h = (2166136261 ^ day) >>> 0;
+  const s = String(id);
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+}
+
 /** 투표 */
 export function decideVote(view) {
   const you = view.you;
+  const day = view.room.day;
   const allies = new Set(you.allies || []);
   const pool = others(view);
   if (!pool.length) return { targetId: 'ABSTAIN' };
 
   let candidates;
   if (you.role?.team === TEAM.MAFIA) {
+    // 마피아는 동료를 빼고, 나머지 중에서 시민들과 같은 기준으로 고른다
     candidates = pool.filter((p) => !allies.has(p.id));
   } else {
+    // 정체가 드러난 마피아가 있으면 무조건 그쪽
     const enemies = knownEnemies(view);
     candidates = enemies.length ? enemies : pool;
   }
   if (!candidates.length) candidates = pool;
 
-  // 가끔은 기권해서 동표 상황도 만들어 본다
-  if (chance(0.1)) return { targetId: 'ABSTAIN' };
-  return { targetId: pick(candidates).id };
+  const target = candidates
+    .slice()
+    .sort((a, b) => consensusScore(day, b.id) - consensusScore(day, a.id))[0];
+  return { targetId: target.id };
 }

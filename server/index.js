@@ -1,4 +1,5 @@
 import http from 'node:http';
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
@@ -15,12 +16,36 @@ const PUBLIC_URL = (process.env.PUBLIC_URL || `http://localhost:${PORT}`).replac
 
 const app = express();
 const IS_PROD = process.env.NODE_ENV === 'production';
-app.use(
-  express.static(path.join(__dirname, '..', 'public'), {
-    maxAge: IS_PROD ? '1h' : 0,
-    etag: true,
-  })
-);
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
+
+/**
+ * 배포할 때마다 바뀌는 값. 정적 파일의 최종 수정 시각으로 만든다.
+ * index.html 안의 자산 주소에 ?v=... 로 붙여서, 배포 직후에도
+ * 브라우저가 예전 JS/CSS 를 계속 쓰는 일이 없게 한다.
+ */
+function buildId() {
+  let latest = 0;
+  for (const f of ['app.js', 'style.css', 'narration.js', 'index.html']) {
+    try { latest = Math.max(latest, fs.statSync(path.join(PUBLIC_DIR, f)).mtimeMs); } catch { /* 무시 */ }
+  }
+  return Math.floor(latest).toString(36);
+}
+const BUILD = buildId();
+
+// index.html 은 캐시하지 않고, 그 안의 자산 주소에만 버전을 박는다
+app.get('/', (_req, res) => {
+  try {
+    const html = fs
+      .readFileSync(path.join(PUBLIC_DIR, 'index.html'), 'utf8')
+      .replace(/(href|src)="\/(app\.js|style\.css|narration\.js)"/g, `$1="/$2?v=${BUILD}"`);
+    res.set('Cache-Control', 'no-cache');
+    res.type('html').send(html);
+  } catch (e) {
+    res.status(500).type('text').send('index.html 을 읽을 수 없습니다.');
+  }
+});
+
+app.use(express.static(PUBLIC_DIR, { maxAge: IS_PROD ? '1h' : 0, etag: true }));
 app.get('/healthz', (_req, res) => res.type('text').send('ok'));
 
 const server = http.createServer(app);
@@ -287,7 +312,7 @@ io.on('connection', (socket) => {
 
     const player = room.addPlayer({ id: newPlayerId(), nickname: name });
     await attach(room, player);
-    room.config.roles = room.suggestRoles(1);
+    room.rebuildComposition();
     cb?.({ ok: true, roomCode: code, playerId: player.id, joinUrl });
     pushState(room);
   });
@@ -318,7 +343,7 @@ io.on('connection', (socket) => {
 
     const player = room.addPlayer({ id: newPlayerId(), nickname: name });
     await attach(room, player);
-    room.config.roles = room.suggestRoles();
+    room.rebuildComposition();
     cb?.({ ok: true, roomCode: code, playerId: player.id, joinUrl: room.joinUrl });
     pushState(room);
   });
@@ -329,7 +354,7 @@ io.on('connection', (socket) => {
     if (room.phase !== PHASE.LOBBY && room.phase !== PHASE.SEATING) {
       return cb?.({ ok: false, error: '게임 중에는 설정을 바꿀 수 없습니다.' });
     }
-    const allowed = ['roles', 'discussSeconds', 'voteSeconds', 'nightSeconds', 'adjacencySkipsDead', 'tieMeansNoExecution', 'maxDays', 'maxDaysWinner', 'mafiaSharedKill', 'strictNeutralElimination', 'autoAdvance', 'showRoleList'];
+    const allowed = ['roles', 'discussSeconds', 'voteSeconds', 'nightSeconds', 'adjacencySkipsDead', 'tieMeansNoExecution', 'maxDays', 'maxDaysWinner', 'mafiaSharedKill', 'strictNeutralElimination', 'autoAdvance', 'showRoleList', 'openVoting'];
     // 직업 배정을 편성표 순서대로 고정하는 테스트 전용 스위치
     if (process.env.MAFIA_TEST_HOOKS === '1') allowed.push('deterministicRoles');
     for (const [k, v] of Object.entries(patch || {})) {
@@ -371,7 +396,8 @@ io.on('connection', (socket) => {
 
   socket.on('host:autoRoles', (_p, cb) => {
     const h = requireHost(cb); if (!h) return;
-    h.room.config.roles = h.room.suggestRoles();
+    // 찜해둔 직업은 자동 편성 뒤에도 남아 있어야 한다
+    h.room.rebuildComposition();
     cb?.({ ok: true, validation: h.room.validateConfig() });
     pushState(h.room);
   });
@@ -483,7 +509,7 @@ io.on('connection', (socket) => {
     }
     if (room.phase === PHASE.LOBBY) {
       room.removePlayer(player.id);
-      room.config.roles = room.suggestRoles();
+      room.rebuildComposition();
     }
     // 사람이 아무도 남지 않았으면 방을 정리한다 (봇만 남은 방은 진행될 수 없다)
     if (room.humans.every((p) => !p.connected)) { rooms.delete(room.code); return; }

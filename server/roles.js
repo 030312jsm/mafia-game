@@ -395,21 +395,35 @@ export const NEUTRAL_POOL = ['jindo', 'clown', 'attention', 'serial_killer', 'tr
 
 /**
  * 인원수에 맞는 진영별 권장 인원.
- * 마피아가 과반이 되면 게임이 성립하지 않으므로 항상 mafia * 2 < n 을 지킨다.
+ *
+ * 5~12인은 봇 시뮬레이션(조합별 60판)으로 실제 승률을 재서 정한 값이다.
+ * 괄호 안은 그 조합에서 나온 마피아/시민 승률.
+ * 마피아 수를 하나 올리면 승률이 30%p 이상 튀기 때문에, 이보다 잘 맞추기는 어렵다.
+ *
+ * 13인 이상은 측정하지 않았고 n/5 비율로 늘린 추정값이다.
  */
+const RECOMMENDED = {
+  4:  { mafia: 1, neutral: 0 },
+  5:  { mafia: 1, neutral: 0 }, // 38 / 62
+  6:  { mafia: 1, neutral: 1 }, // 30 / 70
+  7:  { mafia: 2, neutral: 1 }, // 70 / 30
+  8:  { mafia: 2, neutral: 0 }, // 70 / 30
+  9:  { mafia: 2, neutral: 0 }, // 50 / 50
+  10: { mafia: 2, neutral: 1 }, // 62 / 38
+  11: { mafia: 2, neutral: 1 },
+  12: { mafia: 2, neutral: 1 }, // 65 / 35
+};
+
 export function recommendCounts(n) {
-  const mafia =
-    n <= 5 ? 1 :
-    n <= 7 ? 2 :
-    n <= 10 ? 2 :
-    n <= 13 ? 3 :
-    n <= 16 ? 4 : 5;
-  const neutral =
-    n <= 6 ? 0 :
-    n <= 10 ? 1 :
-    n <= 15 ? 2 : 3;
-  const safeMafia = Math.max(1, Math.min(mafia, Math.ceil(n / 2) - 1));
-  return { mafia: safeMafia, neutral, citizen: Math.max(1, n - safeMafia - neutral) };
+  const base = RECOMMENDED[n] ?? {
+    mafia: Math.max(1, Math.round(n / 5)),
+    neutral: n >= 10 ? 2 : 1,
+  };
+  // 마피아가 처음부터 과반이면 게임이 성립하지 않는다
+  const mafia = Math.max(1, Math.min(base.mafia, Math.ceil(n / 2) - 1));
+  // 중립이 마피아보다 많으면 판이 이상해진다
+  const neutral = Math.max(0, Math.min(base.neutral, mafia, n - mafia - 1));
+  return { mafia, neutral, citizen: Math.max(1, n - mafia - neutral) };
 }
 
 export function getRole(id) {

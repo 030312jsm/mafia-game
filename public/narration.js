@@ -25,9 +25,95 @@ window.Narrator = (() => {
   }
   loadManifest();
 
+  // ── 효과음 합성 ───────────────────────────────────────────
+  // 총소리를 "탕!" 이라고 읽어주면 분위기가 완전히 죽는다.
+  // 음성 파일을 따로 받지 않아도 되도록 브라우저에서 직접 만들어 낸다.
+  // (public/audio 에 mp3 를 넣고 manifest 에 등록하면 그쪽이 우선한다)
+  let audioCtx = null;
+  const liveNodes = new Set();
+
+  function ctx() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return null;
+      try { audioCtx = new AC(); } catch { return null; }
+    }
+    if (audioCtx.state === 'suspended') audioCtx.resume().catch(() => {});
+    return audioCtx;
+  }
+
+  function stopSfx() {
+    for (const n of liveNodes) { try { n.stop(); } catch { /* 이미 끝남 */ } }
+    liveNodes.clear();
+  }
+
+  /** 총성: 순간적인 노이즈 폭발 + 저역 쿵 */
+  function playGunshot() {
+    const ac = ctx();
+    if (!ac) return Promise.resolve(false);
+    const now = ac.currentTime;
+    const dur = 0.45;
+
+    // 총구 폭발음의 몸통 — 뒤로 갈수록 빠르게 잦아드는 백색 잡음
+    const len = Math.max(1, Math.floor(ac.sampleRate * dur));
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) {
+      const t = i / len;
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - t, 3);
+    }
+    const noise = ac.createBufferSource();
+    noise.buffer = buf;
+
+    // 밝은 「탕」에서 둔탁한 잔향으로 떨어지게 저역통과를 쓸어내린다
+    const lp = ac.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(9000, now);
+    lp.frequency.exponentialRampToValueAtTime(320, now + 0.3);
+
+    const noiseGain = ac.createGain();
+    noiseGain.gain.setValueAtTime(0.0001, now);
+    noiseGain.gain.exponentialRampToValueAtTime(1, now + 0.004);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    // 저역 쿵 — 무게감을 준다
+    const thump = ac.createOscillator();
+    thump.type = 'sine';
+    thump.frequency.setValueAtTime(150, now);
+    thump.frequency.exponentialRampToValueAtTime(45, now + 0.18);
+    const thumpGain = ac.createGain();
+    thumpGain.gain.setValueAtTime(0.9, now);
+    thumpGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+
+    const master = ac.createGain();
+    master.gain.value = 0.85;
+
+    noise.connect(lp); lp.connect(noiseGain); noiseGain.connect(master);
+    thump.connect(thumpGain); thumpGain.connect(master);
+    master.connect(ac.destination);
+
+    noise.start(now);
+    thump.start(now);
+    thump.stop(now + 0.25);
+    noise.stop(now + dur);
+    liveNodes.add(noise); liveNodes.add(thump);
+
+    return new Promise((resolve) => {
+      const t = setTimeout(() => {
+        liveNodes.delete(noise); liveNodes.delete(thump);
+        resolve(true);
+      }, dur * 1000 + 60);
+      noise.onended = () => { clearTimeout(t); liveNodes.delete(noise); resolve(true); };
+    });
+  }
+
+  /** 말이 아니라 소리로 내보내야 하는 큐들 */
+  const SFX = { 'sfx.gunshot': playGunshot };
+
   /** 모바일 브라우저는 사용자 조작 이후에만 소리를 허용한다 */
   function unlock() {
     if (unlocked) return;
+    ctx(); // 사용자 조작 시점에 오디오 컨텍스트를 열어둔다
     try {
       const a = new Audio(
         'data:audio/mp3;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tAwAAAAAAAAAAAAAAAAAAAAAAASW5mbwAAAA8AAAACAAABhgC7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7u7v///////////////////////////////////////8AAAAATGF2YzU4LjEzAAAAAAAAAAAAAAAAJAAAAAAAAAAAAYbUyV1cAAAAAAAAAAAAAAAAAAAA//sQxAADwAABpAAAACAAADSAAAAETEFNRTMuMTAwVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV'
@@ -95,9 +181,12 @@ window.Narrator = (() => {
       if (manifest === null) await loadManifest();
       if (gen !== myGen) break;
 
+      // 우선순위: 등록된 음성 파일 → 내장 효과음 → 브라우저 TTS
       const file = manifest[c.key];
       let ok = false;
       if (file) ok = await playFile(`/audio/${file}`);
+      if (gen !== myGen) break;
+      if (!ok && SFX[c.key]) ok = await SFX[c.key]();
       if (gen !== myGen) break;
       if (!ok) await speak(c.text);
       if (gen !== myGen) break;
@@ -112,6 +201,7 @@ window.Narrator = (() => {
   function stopAll() {
     gen++;
     queue.length = 0;
+    stopSfx();
     try { speechSynthesis.cancel(); } catch { /* 무시 */ }
     for (const a of cache.values()) {
       try { a.pause(); a.currentTime = 0; } catch { /* 무시 */ }
@@ -131,6 +221,11 @@ window.Narrator = (() => {
     isMuted: () => muted,
     /** 대기 중인 큐 길이 (동작 확인용) */
     queueLength: () => queue.length,
+    /** 내장 효과음 상태 (동작 확인용) */
+    audioState: () => (audioCtx ? audioCtx.state : 'none'),
+    hasSfx: (key) => !!SFX[key],
+    /** 효과음을 한 번 들어본다 (설정 화면에서 미리듣기 용도) */
+    preview: (key) => (SFX[key] ? SFX[key]() : Promise.resolve(false)),
     /**
      * 큐를 밀어 넣는다.
      * key(단계+일차)가 바뀌면 이전 단계의 음성은 버린다.

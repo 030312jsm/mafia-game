@@ -54,6 +54,10 @@ const DEFAULT_CONFIG = {
   // 게임 중에 이번 판 직업 라인업과 각 능력을 볼 수 있게 할지.
   // 규칙을 익히는 중이면 켜두는 쪽이 편하다.
   showRoleList: true,
+  // 투표를 공개로 진행할지.
+  // 켜면 투표 중에도 누가 누구에게 몇 표를 줬는지 실시간으로 보인다.
+  // (둘러앉아 손 드는 오프라인 방식과 같다) 끄면 개표 전까지 가려진다.
+  openVoting: true,
 };
 
 // 방장이 버튼을 눌러야만 넘어가는 단계들
@@ -159,7 +163,7 @@ export class Room {
     let n = 1;
     while (used.has(`봇${n}`)) n++;
     const bot = this.addPlayer({ id: makeId(), nickname: `봇${n}`, isBot: true });
-    this.config.roles = this.suggestRoles();
+    this.rebuildComposition();
     return { ok: true, bot };
   }
 
@@ -219,7 +223,8 @@ export class Room {
         have++;
       }
     }
-    this.config.roles = roles;
+    // 찜 때문에 중립이 마피아보다 많아지는 일이 없도록 정리한다
+    this.config.roles = this.capNeutrals(roles, pinnedSet);
   }
 
   /** 가장 마지막에 들어온 봇을 뺀다 (id 를 주면 그 봇을) */
@@ -230,7 +235,7 @@ export class Room {
     const target = botId ? list.find((b) => b.id === botId) : list[list.length - 1];
     if (!target) return { ok: false, error: '없는 봇입니다.' };
     this.players.delete(target.id);
-    this.config.roles = this.suggestRoles();
+    this.rebuildComposition();
     return { ok: true };
   }
 
@@ -422,12 +427,50 @@ export class Room {
     // 그래도 3자리 이상 비면 삼둥이 세트를 넣는다 (8인 이상에서만)
     if (n >= 8 && picks.length + TRIPLET_IDS.length <= n) picks.push(...TRIPLET_IDS);
 
-    return picks.slice(0, n);
+    return this.capNeutrals(picks.slice(0, n));
+  }
+
+  /**
+   * 중립이 마피아보다 많아지지 않게 맞춘다.
+   * 넘치는 중립은 아직 안 쓴 시민 직업으로 바꾼다.
+   * pinned 에 든 직업은 사용자가 직접 고른 것이라 건드리지 않는다.
+   */
+  capNeutrals(roles, pinned = new Set()) {
+    const out = [...roles];
+    const teamOf = (id) => getRole(id)?.team;
+    const countTeam = (t) => out.filter((id) => teamOf(id) === t).length;
+
+    let guard = 0;
+    while (countTeam(TEAM.NEUTRAL) > countTeam(TEAM.MAFIA) && guard++ < 20) {
+      // 바꿀 수 있는(찜하지 않은) 중립을 하나 고른다.
+      // 삼둥이는 3종 세트라 하나만 빼면 편성이 깨지므로 건드리지 않는다.
+      const idx = out.findIndex(
+        (id) => teamOf(id) === TEAM.NEUTRAL && !pinned.has(id) && !isTriplet(id)
+      );
+      if (idx === -1) break;
+      const spare = CITIZEN_POOL.find((id) => {
+        const r = getRole(id);
+        return r?.implemented && !isTriplet(id) && !out.includes(id);
+      });
+      if (!spare) break;
+      out[idx] = spare;
+    }
+    return out;
   }
 
   /** 로비에 보여줄 권장 인원 (인원수 기준) */
   recommendation(n = this.players.size) {
     return recommendCounts(n);
+  }
+
+  /**
+   * 편성표를 인원수에 맞게 다시 만든다.
+   * 찜해둔 직업은 반드시 살려둔다 — 자동 편성이 찜을 지워버리면
+   * 삼둥이처럼 세트로 들어가야 하는 직업이 반쪽만 남는다.
+   */
+  rebuildComposition() {
+    this.config.roles = this.suggestRoles();
+    this.ensurePinnedInComposition();
   }
 
   // ── 시작 ──────────────────────────────────────────────────────
@@ -750,13 +793,20 @@ export class Room {
 
       } else if (role.id === 'triplet_neutral') {
         const guessed = [a.targetId, a.secondId];
-        const siblings = this.tripletsOf().filter((s) => s.id !== p.id).map((s) => s.id);
-        const correct = siblings.length === 2 && guessed.every((g) => siblings.includes(g));
-        if (correct) {
-          this.soloWins.push({ playerId: p.id, roleId: 'triplet_neutral', reason: '삼둥이 셋째가 첫째와 둘째를 모두 맞혔습니다.' });
-          this.tell(p.id, '두 형제를 모두 맞혔습니다. 당신의 승리입니다.');
+        const siblings = new Set(this.tripletsOf().filter((s) => s.id !== p.id).map((s) => s.id));
+        const hits = guessed.filter((g) => siblings.has(g)).length;
+        const names = guessed.map((g) => this.label(this.players.get(g))).join(', ');
+
+        if (hits === 2) {
+          this.soloWins.push({
+            playerId: p.id, roleId: 'triplet_neutral',
+            reason: '삼둥이 셋째가 첫째와 둘째를 모두 맞혔습니다.',
+          });
+          this.tell(p.id, `${names} — 두 형제를 모두 맞혔습니다. 당신의 승리입니다.`);
+        } else if (hits === 1) {
+          this.tell(p.id, `${names} — 둘 중 한 명만 형제입니다. 누가 맞았는지는 알 수 없습니다.`);
         } else {
-          this.tell(p.id, '둘 중 최소 한 명은 형제가 아닙니다.');
+          this.tell(p.id, `${names} — 둘 다 형제가 아닙니다.`);
         }
       }
     }
@@ -1375,11 +1425,27 @@ export class Room {
       seats: { total: this.seatCount, taken: this.seatMap() },
       vote:
         this.phase === PHASE.VOTE || this.phase === PHASE.EXECUTION
-          ? {
-              tally: this.phase === PHASE.EXECUTION ? this.voteTally() : null,
-              votedCount: this.ballots.size,
-              totalVoters: this.alivePlayers.length,
-            }
+          ? (() => {
+              // 개표가 끝났으면 무조건 공개, 투표 중이면 공개 투표일 때만 보여준다
+              const open = this.phase === PHASE.EXECUTION || this.config.openVoting;
+              return {
+                open,
+                tally: open ? this.voteTally() : null,
+                // 누가 누구를 찍었는지 (공개 투표일 때만)
+                ballots: open
+                  ? [...this.ballots.entries()]
+                      .filter(([vid]) => this.players.get(vid)?.alive)
+                      .map(([voterId, targetId]) => ({ voterId, targetId }))
+                  : [],
+                abstain: open
+                  ? [...this.ballots.entries()].filter(
+                      ([vid, t]) => t === 'ABSTAIN' && this.players.get(vid)?.alive
+                    ).length
+                  : 0,
+                votedCount: this.ballots.size,
+                totalVoters: this.alivePlayers.length,
+              };
+            })()
           : null,
       deaths: this.pendingDeaths.map((d) => ({
         ...d,
@@ -1408,9 +1474,10 @@ export class Room {
       result: this.result,
       catalog: this.phase === PHASE.LOBBY ? roleCatalog() : null,
       recommend: this.phase === PHASE.LOBBY ? recommendCounts(this.players.size) : null,
-      // 이번 판에 어떤 직업이 들어 있는지 (누가 뭔지는 알려주지 않는다)
+      // 이번 판에 어떤 직업이 들어 있는지 (누가 뭔지는 알려주지 않는다).
+      // 대기실에서도 편성한 직업의 설명을 읽을 수 있어야 한다.
       lineup:
-        this.config.showRoleList && this.phase !== PHASE.LOBBY
+        this.config.showRoleList
           ? [...new Set(this.config.roles)].map((id) => {
               const r = getRole(id);
               return {

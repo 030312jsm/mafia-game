@@ -160,6 +160,51 @@ const run = async () => {
   }
 
   {
+    head('직업 체험 — 삼둥이를 찜한 뒤 자동 편성해도 세트가 유지된다');
+    const g = await setup(Array.from({ length: 8 }, (_, i) => (i === 0 ? 'mafia' : 'citizen')));
+    await g.c[0].emit('host:reset', {});
+    await sleep(300);
+    const pin = await g.c[3].emit('role:pin', { roleId: 'triplet_neutral' });
+    await sleep(300);
+    check('삼둥이 찜 성공', pin.ok, pin.error || '');
+    const afterPin = g.c[0].state.room.config.roles;
+    check('찜 직후 삼둥이 3종이 모두 들어감',
+      ['triplet_mafia', 'triplet_citizen', 'triplet_neutral'].every((r) => afterPin.includes(r)),
+      afterPin.join(','));
+
+    // 자동 편성을 다시 눌러도 세트가 깨지면 안 된다
+    const auto = await g.c[0].emit('host:autoRoles', {});
+    await sleep(300);
+    const afterAuto = g.c[0].state.room.config.roles;
+    check('자동 편성 후에도 삼둥이 3종 유지',
+      ['triplet_mafia', 'triplet_citizen', 'triplet_neutral'].every((r) => afterAuto.includes(r)),
+      afterAuto.join(','));
+    check('자동 편성 후에도 편성이 유효함', auto.validation.ok,
+      (auto.validation.errors || []).join(' / '));
+    g.close();
+  }
+
+  {
+    head('자동 편성 — 중립이 마피아보다 많아지지 않는다');
+    for (const n of [6, 8, 10, 12]) {
+      const g = await setup(Array.from({ length: n }, (_, i) => (i === 0 ? 'mafia' : 'citizen')));
+      await g.c[0].emit('host:reset', {});
+      await sleep(250);
+      await g.c[0].emit('host:autoRoles', {});
+      await sleep(300);
+      const roles = g.c[0].state.room.config.roles;
+      const teamOf = (id) => ({
+        sniper: 'M', rigger: 'M', chairman: 'M', independent_mafia: 'M', triplet_mafia: 'M', mafia: 'M',
+        jindo: 'N', clown: 'N', attention: 'N', serial_killer: 'N', triplet_neutral: 'N',
+      }[id] || 'C');
+      const m = roles.filter((r) => teamOf(r) === 'M').length;
+      const k = roles.filter((r) => teamOf(r) === 'N').length;
+      check(`${n}인 — 중립(${k}) ≤ 마피아(${m})`, k <= m, roles.join(','));
+      g.close();
+    }
+  }
+
+  {
     head('직업 체험 — 인원이 모자라는 직업은 거부');
     const g = await setup(['mafia', 'citizen', 'citizen', 'citizen', 'citizen']);
     await g.c[0].emit('host:reset', {});
@@ -463,6 +508,34 @@ const run = async () => {
     check('셋째 단독 승리', w.length === 1 && w[0].playerId === g.id(2), JSON.stringify(w));
     check('승리 사유 기록', g.c[0].state.result.reason.includes('맞혔'), g.c[0].state.result.reason);
     g.close();
+  }
+
+  {
+    head('삼둥이 셋째 — 몇 명 맞혔는지 알려준다');
+    const mk = () => setup([
+      'triplet_mafia', 'triplet_citizen', 'triplet_neutral',
+      'mafia', 'citizen', 'citizen', 'citizen', 'citizen',
+    ]);
+
+    // 둘 다 형제가 아닌 경우
+    const a = await mk();
+    await a.toNight();
+    await a.act(2, { targetId: a.id(4), secondId: a.id(5) });
+    await a.passRest();
+    await a.dawn();
+    check('둘 다 틀리면 「둘 다 아니다」', a.info(2).includes('둘 다 형제가 아닙니다'), a.info(2));
+    check('아직 승리하지 않음', a.c[0].state.room.phase !== 'END');
+    a.close();
+
+    // 한 명만 형제인 경우
+    const b = await mk();
+    await b.toNight();
+    await b.act(2, { targetId: b.id(0), secondId: b.id(4) });
+    await b.passRest();
+    await b.dawn();
+    check('한 명만 맞으면 「한 명만」', b.info(2).includes('한 명만 형제입니다'), b.info(2));
+    check('누가 맞았는지는 숨김', b.info(2).includes('알 수 없습니다'));
+    b.close();
   }
 
   // ── 관종 ─────────────────────────────────────────────────────
