@@ -207,13 +207,19 @@ test/
 
 ## 나레이션 음성 넣기
 
-`public/audio/README.md` 참고. 요약하면:
+AI Studio 의 Gemini TTS 로 **한 명령에 전부 생성**할 수 있다.
 
-1. `public/audio/` 에 mp3 를 넣는다 (예: `night.mafia.mp3`)
-2. `public/audio/manifest.json` 에 `"night.mafia": "night.mafia.mp3"` 추가
+```bash
+$env:GEMINI_API_KEY='발급받은키'; npm run narration
+```
 
-등록하지 않은 키는 자동으로 브라우저 TTS 로 대체되므로, **한 번에 다 만들 필요 없이
-하나씩 채워 넣으면 된다.** 키 전체 목록은 `server/narration.js` 에 있다.
+34개를 만들어 `public/audio/` 에 넣고 `manifest.json` 까지 갱신한다.
+대본과 연출 지시는 `tools/narration-script.mjs` 에 있고, 마음에 안 드는 대사는
+거기서 고친 뒤 `npm run narration -- --only <키>` 로 그것만 다시 만들면 된다.
+
+손으로 넣고 싶으면 `public/audio/` 에 파일을 두고 `manifest.json` 에 키를 추가하면 된다.
+등록하지 않은 키는 자동으로 브라우저 TTS 로 대체되므로 **한 번에 다 만들 필요 없다.**
+자세한 내용은 `public/audio/README.md` 참고.
 
 ## 직업 추가하기
 

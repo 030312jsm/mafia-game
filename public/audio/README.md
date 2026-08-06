@@ -1,9 +1,47 @@
 # 나레이션 음성 파일 넣는 곳
 
-이 폴더에 mp3 를 넣고 `manifest.json` 에 등록하면, 해당 나레이션은 브라우저 TTS 대신
-녹음한 음성으로 재생된다. 등록하지 않은 키는 자동으로 TTS 로 대체되므로 **한 번에 다 만들 필요 없다.**
+이 폴더에 음성 파일을 넣고 `manifest.json` 에 등록하면, 해당 나레이션은 브라우저 TTS 대신
+그 음성으로 재생된다. 등록하지 않은 키는 자동으로 TTS 로 대체되므로 **한 번에 다 만들 필요 없다.**
 
-## 등록 방법
+---
+
+## 한 번에 자동 생성하기 (권장)
+
+AI Studio 의 Gemini TTS 로 나레이션 34개를 한 명령에 만들고 `manifest.json` 까지 갱신한다.
+
+1. https://aistudio.google.com/apikey 에서 API 키를 발급받는다
+2. 키를 환경변수에 넣고 실행한다 (PowerShell)
+
+```bash
+$env:GEMINI_API_KEY='발급받은키'; npm run narration
+```
+
+무엇이 만들어질지 먼저 보려면:
+
+```bash
+npm run narration -- --dry
+```
+
+**옵션**
+
+| 옵션 | 설명 |
+|---|---|
+| `--voice <이름>` | 목소리 (기본 `Charon`). `Kore` `Puck` `Enceladus` 등 |
+| `--model <이름>` | 모델 (기본 `gemini-2.5-flash-preview-tts`) |
+| `--only <키,키>` | 특정 키만 다시 생성 |
+| `--force` | 이미 있는 파일도 덮어쓰기 |
+| `--dry` | 호출 없이 목록만 출력 |
+
+대본과 연출 지시는 `tools/narration-script.mjs` 에 있다. 밤 안내는 낮고 조용하게,
+아침·투표 안내는 또렷하게 — 두 가지 톤이 기본이다. 마음에 안 드는 대사는 거기서 고치고
+`--only` 로 그 키만 다시 만들면 된다.
+
+> 총성(`sfx.gunshot`)은 말이 아니라 소리라 생성 대상에서 빠져 있다.
+> 이미 브라우저에서 합성해 재생하므로 따로 준비하지 않아도 된다.
+
+---
+
+## 손으로 넣는 방법
 
 1. 음성 파일을 이 폴더에 넣는다. 예: `night.begin.mp3`
 2. `manifest.json` 에 `"키": "파일명"` 한 줄 추가한다.
