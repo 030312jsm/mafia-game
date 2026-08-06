@@ -81,15 +81,30 @@ export function decideNight(view) {
       break;
     }
 
-    case 'guardian':
-      // 절반 가까이는 자기 자신을 보호
+    case 'guardian': {
+      // 지난밤 공격받은 사람은 다시 노려질 확률이 높다
+      const attacked = (you.info || [])
+        .filter((i) => i.kind === 'guard.saved' && i.about)
+        .map((i) => i.about)
+        .filter((id) => targets.includes(id));
+      if (attacked.length && chance(0.5)) { candidates = attacked; break; }
+      // 아니면 절반 가까이는 자기 자신을 지킨다
       candidates = chance(0.4) ? [you.id] : targets.filter((id) => id !== you.id);
       if (!candidates.length) candidates = targets;
       break;
+    }
 
     case 'police': case 'detective': case 'gymrat': case 'soldier': case 'reporter': {
       const enemies = knownEnemies(view).map((p) => p.id).filter((id) => targets.includes(id));
-      candidates = enemies.length ? enemies : targets.filter((id) => id !== you.id);
+      if (enemies.length) { candidates = enemies; break; }
+      // 이미 조사해서 결과를 아는 사람은 또 볼 이유가 없다.
+      // 정체가 드러난 사람도 마찬가지다.
+      const known = new Set(
+        (you.info || []).filter((i) => i.about).map((i) => i.about)
+      );
+      for (const p of others(view)) if (p.revealedRole) known.add(p.id);
+      const fresh = targets.filter((id) => id !== you.id && !known.has(id));
+      candidates = fresh.length ? fresh : targets.filter((id) => id !== you.id);
       break;
     }
 
@@ -141,11 +156,11 @@ export function decideDay(view) {
 /**
  * 그날의 「합의 점수」.
  * 일차와 대상 id 만으로 정해지므로 모든 봇이 같은 값을 계산한다.
- * 이걸로 정렬해 1위를 찍으면, 말을 하지 않고도 같은 사람에게 표가 모인다.
+ * 근거가 없어 우열을 가릴 수 없을 때 이걸로 순위를 매기면,
+ * 말을 하지 않고도 같은 사람에게 표가 모인다.
  *
- * 각자 무작위로 찍게 두면 표가 흩어져 동표가 나고 처형이 거의 일어나지 않는다.
- * 그러면 마피아가 밤마다 한 명씩 줄여 이기는 결과만 나와서 밸런스 측정이 무의미해진다.
- * 실제 사람은 토론으로 한 명에 의견을 모으므로, 그쪽에 가깝게 맞춘 것이다.
+ * 각자 무작위로 찍게 두면 표가 흩어져 동표만 나고 처형이 거의 일어나지 않는다.
+ * 실제 사람은 토론으로 한 명에 의견을 모으므로 그쪽에 가깝게 맞춘 장치다.
  */
 function consensusScore(day, id) {
   let h = (2166136261 ^ day) >>> 0;
@@ -157,6 +172,58 @@ function consensusScore(day, id) {
   return h >>> 0;
 }
 
+/** 투표로는 죽지 않는 직업들 (이름으로 판별) */
+const VOTE_IMMUNE_NAMES = new Set(['무소속당 (마피아)', '무소속당 (시민)', '부정선거자']);
+
+/**
+ * 사람별 의심도.
+ * 자기가 실제로 가진 근거만 쓴다. 방 내부 상태를 훔쳐보지 않는다.
+ *
+ * 큰 음수는 「찍어봐야 소용없다」는 뜻이고,
+ * 큰 양수는 「마피아일 가능성이 높다」는 뜻이다.
+ */
+function suspicionScores(view) {
+  const you = view.you;
+  const allies = new Set(you.allies || []);
+  const score = new Map();
+  const add = (id, v) => score.set(id, (score.get(id) || 0) + v);
+
+  for (const p of others(view)) {
+    add(p.id, 0);
+    // 정체가 드러난 사람
+    const team = teamOfRoleName(p.revealedRole);
+    if (team === TEAM.MAFIA && !allies.has(p.id)) add(p.id, 100);
+    else if (team === TEAM.CITIZEN) add(p.id, -60);
+    else if (team === TEAM.NEUTRAL) add(p.id, -20);
+  }
+
+  // 내가 밤에 얻은 정보
+  for (const info of you.info || []) {
+    if (!info.about || !score.has(info.about)) continue;
+    if (info.kind === 'police.clear') add(info.about, -80);      // 그 밤엔 아무도 안 죽였다
+    else if (info.kind === 'police.kill') add(info.about, 200);
+    else if (info.kind === 'guard.saved') add(info.about, -30);  // 마피아가 노린 사람 = 대개 시민
+    else if (info.kind === 'detective') {
+      // 두 후보 중 마피아 진영이 섞여 있으면 그만큼 의심스럽다
+      const mafiaish = (info.options || []).filter((n) => teamOfRoleName(n) === TEAM.MAFIA).length;
+      add(info.about, mafiaish * 35 - (info.options || []).length * 5);
+    }
+  }
+
+  // 마피아는 동료를 절대 찍지 않는다
+  for (const id of allies) score.set(id, -1e6);
+  return score;
+}
+
+/**
+ * 표를 줘봐야 죽지 않는 게 이미 드러난 사람.
+ * 의심도와 섞어서 점수로 깎으면, 「의심스럽지만 못 죽이는」 사람이
+ * 상쇄돼 다시 1순위로 올라오는 사고가 난다. 그래서 아예 후보에서 뺀다.
+ */
+function isPointlessTarget(p) {
+  return !!p.survivedVote || VOTE_IMMUNE_NAMES.has(p.revealedRole);
+}
+
 /** 투표 */
 export function decideVote(view) {
   const you = view.you;
@@ -165,19 +232,17 @@ export function decideVote(view) {
   const pool = others(view);
   if (!pool.length) return { targetId: 'ABSTAIN' };
 
-  let candidates;
-  if (you.role?.team === TEAM.MAFIA) {
-    // 마피아는 동료를 빼고, 나머지 중에서 시민들과 같은 기준으로 고른다
-    candidates = pool.filter((p) => !allies.has(p.id));
-  } else {
-    // 정체가 드러난 마피아가 있으면 무조건 그쪽
-    const enemies = knownEnemies(view);
-    candidates = enemies.length ? enemies : pool;
-  }
-  if (!candidates.length) candidates = pool;
+  const candidates = pool.filter((p) => !isPointlessTarget(p) && !allies.has(p.id));
+  // 죽일 수 있는 상대가 하나도 없으면 표를 버리지 말고 기권한다
+  if (!candidates.length) return { targetId: 'ABSTAIN' };
 
-  const target = candidates
-    .slice()
-    .sort((a, b) => consensusScore(day, b.id) - consensusScore(day, a.id))[0];
-  return { targetId: target.id };
+  const score = suspicionScores(view);
+  const best = candidates.slice().sort((a, b) => {
+    const d = (score.get(b.id) || 0) - (score.get(a.id) || 0);
+    if (d !== 0) return d;
+    // 근거가 같으면 합의 점수로 갈라 모두가 같은 사람을 찍게 한다
+    return consensusScore(day, b.id) - consensusScore(day, a.id);
+  })[0];
+
+  return { targetId: best.id };
 }

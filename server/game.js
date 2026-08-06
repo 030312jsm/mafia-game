@@ -162,6 +162,7 @@ export class Room {
       alive: true,
       connected: true,
       socketId: null,
+      survivedVote: false,   // 처형을 견뎌낸 적이 있는지 (공개 사실)
       info: [],
       rs: this.freshRoleState(),
       lastSeen: Date.now(),
@@ -664,6 +665,7 @@ export class Room {
       p.tripletOrder = null;
       p.alive = true;
       p.info = [];
+      p.survivedVote = false;
       p.rs = this.freshRoleState();
     }
 
@@ -912,9 +914,11 @@ export class Room {
       const suspect = this.players.get(a.targetId);
       if (killers.has(a.targetId)) {
         policeKills.push({ playerId: a.targetId, cause: 'POLICE', byId: p.id });
-        this.tell(p.id, `${this.label(suspect)} 이(가) 사람을 죽이려는 것을 목격하고 사살했습니다.`);
+        this.tell(p.id, `${this.label(suspect)} 이(가) 사람을 죽이려는 것을 목격하고 사살했습니다.`,
+          { kind: 'police.kill', about: a.targetId });
       } else {
-        this.tell(p.id, `${this.label(suspect)} 은(는) 간밤에 아무도 죽이지 않았습니다.`);
+        this.tell(p.id, `${this.label(suspect)} 은(는) 간밤에 아무도 죽이지 않았습니다.`,
+          { kind: 'police.clear', about: a.targetId });
       }
     }
 
@@ -926,7 +930,8 @@ export class Room {
         const real = this.trueRole(target);
         const decoy = pick(this.decoyPoolFor(target));
         const pair = shuffle([real.name, decoy.name]);
-        this.tell(p.id, `${this.label(target)} 의 직업은 「${pair[0]}」 또는 「${pair[1]}」 중 하나입니다.`);
+        this.tell(p.id, `${this.label(target)} 의 직업은 「${pair[0]}」 또는 「${pair[1]}」 중 하나입니다.`,
+          { kind: 'detective', about: target.id, options: pair });
 
       } else if (role.id === 'reporter') {
         const real = this.trueRole(target);
@@ -961,7 +966,9 @@ export class Room {
     // 차단 통보
     for (const id of blocked) {
       const p = this.players.get(id);
-      if (p && this.actingRole(p)?.night) this.tell(id, '누군가에 의해 능력이 차단되었습니다.');
+      if (p && this.actingRole(p)?.night) {
+        this.tell(id, '누군가에 의해 능력이 차단되었습니다.', { kind: 'blocked' });
+      }
     }
 
     // 포섭 실행 — 보호받고 있어도 포섭은 막히지 않는다
@@ -981,7 +988,8 @@ export class Room {
     for (const g of guards) {
       if (!attacked.has(g.targetId)) continue;
       const who = g.targetId === g.byId ? '당신' : this.label(this.players.get(g.targetId));
-      this.tell(g.byId, `${who} 을(를) 노린 공격이 있었지만 막아냈습니다.`);
+      this.tell(g.byId, `${who} 을(를) 노린 공격이 있었지만 막아냈습니다.`,
+        { kind: 'guard.saved', about: g.targetId });
     }
 
     // 호신술사의 되받아치기.
@@ -1095,6 +1103,8 @@ export class Room {
       if (deaths.some((x) => x.playerId === p.id)) continue;
 
       if (d.cause === 'VOTE' && this.isVoteImmune(p)) {
+        // 처형을 견딘 사실은 모두가 눈으로 본다. 다음부터는 아무도 표를 낭비하지 않는다.
+        p.survivedVote = true;
         blocked.push({ playerId: p.id, reason: 'VOTE_IMMUNE' });
         continue;
       }
@@ -1482,6 +1492,7 @@ export class Room {
       p.tripletOrder = null;
       p.seat = null;
       p.info = [];
+      p.survivedVote = false;
       p.rs = this.freshRoleState();
     }
   }
@@ -1497,10 +1508,18 @@ export class Room {
     if (this.publicLog.length > 200) this.publicLog.shift();
   }
 
-  tell(playerId, text) {
+  /**
+   * 개인에게만 보이는 정보를 남긴다.
+   * meta 는 화면에는 안 보이지만 봇이 근거를 따질 때 쓴다.
+   * (문장을 문자열로 뒤지게 하면 문구만 바꿔도 판단이 깨진다)
+   *   kind: 'police.clear' | 'police.kill' | 'detective' | 'blocked'
+   *       | 'guard.saved' | 'reflect' | 'dead' | 'converted' | 'recharge'
+   *   about: 그 정보가 가리키는 사람의 id
+   */
+  tell(playerId, text, meta = null) {
     const p = this.players.get(playerId);
     if (!p) return;
-    p.info.push({ day: this.day, text, at: Date.now() });
+    p.info.push({ day: this.day, text, at: Date.now(), ...(meta || {}) });
   }
 
   // ── 개인화 상태 뷰 ────────────────────────────────────────────
@@ -1553,6 +1572,9 @@ export class Room {
         isYou: p.id === playerId,
         isBot: !!p.isBot,
         revealedRole: this.revealedRoleFor(me, p),
+        // 처형을 견뎌낸 적이 있는 사람. 공개 사실이므로 모두가 안다.
+        // 이걸 알고도 표를 주는 건 표를 버리는 짓이다.
+        survivedVote: !!p.survivedVote,
       }));
 
     const nightSpec = role?.night ?? null;

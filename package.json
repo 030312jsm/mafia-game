@@ -9,6 +9,7 @@
     "dev": "node --watch server/index.js",
     "test": "node test/smoke.mjs",
     "test:roles": "node test/roles.mjs",
+    "test:brain": "node test/brain.mjs",
     "narration": "node tools/make-narration.mjs",
     "bots": "node test/play.mjs",
     "sim": "node test/simulate.mjs"

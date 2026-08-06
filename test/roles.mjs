@@ -414,6 +414,26 @@ const run = async () => {
     g.close();
   }
 
+  // ── 봇 판단: 표를 버리지 않는다 ─────────────────────────────
+  {
+    head('봇 — 처형을 견뎌낸 사람에게는 다시 표를 주지 않는다');
+    // 자리 2번이 무소속당(마피아). 투표로 죽지 않는다.
+    const g = await setup([
+      'independent_mafia', 'citizen', 'citizen', 'citizen', 'citizen', 'citizen',
+    ], { mafiaSharedKill: true });
+    await g.toNight();
+    await g.passRest();
+    await g.dawn();
+    await g.toVote();
+    await g.voteAll(0);                    // 전원이 무소속당을 지목
+    await g.execution();
+    check('투표로 죽지 않음', g.alive(0));
+    check('견뎌낸 사실이 모두에게 보임',
+      g.c[3].state.players.find((p) => p.id === g.id(0))?.survivedVote === true,
+      JSON.stringify(g.c[3].state.players.map((p) => p.survivedVote)));
+    g.close();
+  }
+
   // ── 호신술사: 살해 되받아치기 ───────────────────────────────
   {
     head('호신술사 — 자신을 노린 살해를 되받아친다 (1회)');
