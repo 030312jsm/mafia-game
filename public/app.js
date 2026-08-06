@@ -299,7 +299,11 @@
     const hasLog = !inLobby && !!S?.publicLog?.length;
     if (!hasLineup && !hasLog) return '';
 
-    const tab = (!hasLineup && drawerTab === 'roles') ? 'log' : drawerTab;
+    // 봇들의 낮 대화는 개발자 모드에서만 볼 수 있다
+    const hasChat = isDev() && !!S?.chat?.length;
+    let tab = drawerTab;
+    if (!hasLineup && tab === 'roles') tab = hasLog ? 'log' : 'chat';
+    if (!hasChat && tab === 'chat') tab = hasLineup ? 'roles' : 'log';
     return `
       <button class="drawer-tab" data-action="open-drawer" aria-label="직업 설명 열기">
         <span>📖</span><span class="drawer-tab-label">${inLobby ? '도감' : '직업'}</span>
@@ -312,11 +316,15 @@
               data-action="drawer-tab" data-tab="roles">직업</button>` : ''}
             ${hasLog ? `<button class="${tab === 'log' ? 'on' : ''}"
               data-action="drawer-tab" data-tab="log">기록</button>` : ''}
+            ${hasChat ? `<button class="${tab === 'chat' ? 'on' : ''}"
+              data-action="drawer-tab" data-tab="chat">💬 대화</button>` : ''}
           </div>
           <button class="drawer-close" data-action="close-drawer" aria-label="닫기">✕</button>
         </div>
         <div class="drawer-body">
-          ${tab === 'roles' ? (inLobby ? viewRoleBook() : viewLineup()) : viewPublicLog()}
+          ${tab === 'chat' ? viewBotChat()
+            : tab === 'roles' ? (inLobby ? viewRoleBook() : viewLineup())
+            : viewPublicLog()}
         </div>
       </aside>`;
   }
@@ -1053,6 +1061,58 @@
           <div class="info-item"><span class="dim small">${i.day}일차 ·</span> ${esc(i.text)}</div>
         `).join('')}
       </div>`;
+  }
+
+  /**
+   * 봇들의 낮 대화 (개발자 모드 전용).
+   * 카톡 단체방을 들여다보는 형태다. 관전자 시점이라 전부 왼쪽 정렬이고,
+   * 같은 사람이 연달아 말하면 이름과 프로필을 생략한다.
+   */
+  function viewBotChat() {
+    const chat = S?.chat || [];
+    if (!chat.length) return '<p class="small dim">아직 오간 말이 없습니다.</p>';
+
+    const KIND_LABEL = {
+      'claim.police': '경찰 주장',
+      'claim.detective': '탐정 주장',
+      'claim.guard': '수호자 주장',
+      'claim.reflect': '반사 주장',
+      accuse: '지목',
+      agree: '동조',
+    };
+
+    let html = '';
+    let lastDay = null;
+    let lastSpeaker = null;
+
+    for (const m of chat) {
+      if (m.day !== lastDay) {
+        html += `<div class="kk-day">${m.day}일차 토론</div>`;
+        lastDay = m.day;
+        lastSpeaker = null;
+      }
+      const cont = m.playerId === lastSpeaker;
+      const time = new Date(m.at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+      html += `
+        <div class="kk-row ${cont ? 'cont' : ''}">
+          <div class="kk-face">${cont ? '' : (m.seat ?? '?')}</div>
+          <div class="kk-body">
+            ${cont ? '' : `<div class="kk-name">${esc(m.nickname)}
+              ${KIND_LABEL[m.kind] ? `<span class="kk-kind">${KIND_LABEL[m.kind]}</span>` : ''}</div>`}
+            <div class="kk-line">
+              <div class="kk-bubble">${esc(m.text)}</div>
+              <span class="kk-time">${time}</span>
+            </div>
+          </div>
+        </div>`;
+      lastSpeaker = m.playerId;
+    }
+
+    return `
+      <p class="small dim" style="margin:0 0 10px">
+        봇들이 낮에 주고받은 말입니다. 밝힌 사람은 그날 밤 마피아의 표적이 됩니다.
+      </p>
+      <div class="kakao">${html}</div>`;
   }
 
   /** 대기실용 직업 도감 — 전체 직업 설명. 이번 판에 넣은 직업은 표시해 준다 */

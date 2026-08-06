@@ -27,6 +27,20 @@ function knownEnemies(view) {
   );
 }
 
+/**
+ * 낮에 능력을 밝힌 사람들만 남긴다 (있을 때만).
+ * 마피아 입장에서는 정체가 드러난 능력자가 가장 먼저 없애야 할 대상이다.
+ */
+function preferClaimants(view, ids) {
+  const claimants = new Set(
+    (view.chat || [])
+      .filter((c) => typeof c.kind === 'string' && c.kind.startsWith('claim.'))
+      .map((c) => c.playerId)
+  );
+  const hit = ids.filter((id) => claimants.has(id));
+  return hit.length ? hit : ids;
+}
+
 /** 자리 정하기 — 비어 있는 가장 낮은 번호를 잡는다 */
 export function decideSeat(view) {
   if (view.you.seat != null) return null;
@@ -73,6 +87,9 @@ export function decideNight(view) {
     case 'mafia': case 'rigger': case 'independent_mafia':
     case 'triplet_mafia': case 'sniper':
       candidates = targets.filter((id) => !allies.has(id));
+      // 낮에 능력을 밝힌 사람이 최우선 표적이다.
+      // 입을 여는 순간 위험해진다는 게 이 게임의 핵심 긴장이다.
+      candidates = preferClaimants(view, candidates);
       break;
 
     case 'chairman': {
@@ -109,7 +126,7 @@ export function decideNight(view) {
     }
 
     case 'serial_killer':
-      candidates = targets.filter((id) => id !== you.id);
+      candidates = preferClaimants(view, targets.filter((id) => id !== you.id));
       break;
 
     default:
@@ -175,6 +192,126 @@ function consensusScore(day, id) {
 /** 투표로는 죽지 않는 직업들 (이름으로 판별) */
 const VOTE_IMMUNE_NAMES = new Set(['무소속당 (마피아)', '무소속당 (시민)', '부정선거자']);
 
+const nameOf = (view, id) => {
+  const p = view.players.find((x) => x.id === id);
+  return p ? `${p.seat}번 ${p.nickname}` : '누군가';
+};
+
+/**
+ * 낮 토론 발언 판단.
+ *
+ * 사람이 실제로 재는 것들을 그대로 옮겼다.
+ *  - 능력을 밝히면 정보는 공유되지만 그날 밤 표적이 된다
+ *  - 그래서 초반에는 숨기고, 결정적인 정보가 있거나 판이 급해지면 입을 연다
+ *  - 마피아는 시민의 주장에 맞불을 놓아 누가 진짜인지 흐린다
+ *
+ * 돌려주는 값이 null 이면 이번에는 아무 말도 하지 않는다.
+ */
+export function decideSpeak(view) {
+  const you = view.you;
+  if (!you.alive) return null;
+
+  const chat = view.chat || [];
+  const day = view.room.day;
+  const aliveOthers = others(view);
+  const total = view.players.length;
+  // 사람이 줄어들수록 급해진다. 0(아무도 안 죽음) ~ 1에 가까움
+  const pressure = 1 - (aliveOthers.length + 1) / total;
+  const said = (kind) => chat.some((c) => c.playerId === you.id && c.kind === kind);
+  const roleId = you.role?.id;
+  const info = you.info || [];
+  const name = (id) => nameOf(view, id);
+
+  // ── 경찰 ──────────────────────────────────────────────
+  if (roleId === 'police') {
+    // 살인 목격은 결정적이다. 위험을 감수하고 바로 공개한다.
+    const kill = info.find((i) => i.kind === 'police.kill');
+    if (kill && !said('claim.police')) {
+      return {
+        kind: 'claim.police', about: kill.about,
+        text: `제가 경찰입니다. 어젯밤 ${name(kill.about)}이(가) 사람을 죽이려는 걸 목격하고 사살했습니다.`,
+      };
+    }
+    // 무고 확인은 덜 결정적이라, 밝혀서 표적이 될 값어치가 있을 때만 꺼낸다.
+    const clears = info.filter((i) => i.kind === 'police.clear');
+    if (clears.length && !said('claim.police') && (day >= 3 || pressure >= 0.3) && chance(0.7)) {
+      const list = clears.map((c) => name(c.about)).join(', ');
+      return {
+        kind: 'claim.police', about: clears[clears.length - 1].about,
+        text: `제가 경찰입니다. ${list}은(는) 밤에 아무도 죽이지 않았습니다.`,
+      };
+    }
+  }
+
+  // ── 탐정 ──────────────────────────────────────────────
+  if (roleId === 'detective') {
+    const hits = info.filter(
+      (i) => i.kind === 'detective' && (i.options || []).some((n) => teamOfRoleName(n) === TEAM.MAFIA)
+    );
+    if (hits.length && !said('claim.detective') && (day >= 2 || chance(0.4))) {
+      const h = hits[hits.length - 1];
+      return {
+        kind: 'claim.detective', about: h.about,
+        text: `제가 탐정입니다. ${name(h.about)}은(는) 「${h.options[0]}」 아니면 「${h.options[1]}」입니다.`,
+      };
+    }
+  }
+
+  // ── 수호자 ────────────────────────────────────────────
+  if (roleId === 'guardian') {
+    const saved = info.find((i) => i.kind === 'guard.saved');
+    // 막아낸 사실은 「마피아가 저 사람을 노렸다」는 정보다. 다만 밝히면 다음 표적이 된다.
+    if (saved && !said('claim.guard') && pressure >= 0.25 && chance(0.55)) {
+      return {
+        kind: 'claim.guard', about: saved.about,
+        text: `제가 수호자입니다. 어젯밤 ${name(saved.about)}이(가) 공격받는 걸 막았습니다.`,
+      };
+    }
+  }
+
+  // ── 호신술사 ──────────────────────────────────────────
+  if (roleId === 'reflector') {
+    const r = info.find((i) => i.kind === 'reflect');
+    if (r && !said('claim.reflect') && chance(0.8)) {
+      return {
+        kind: 'claim.reflect',
+        text: '어젯밤 저를 노린 공격을 되받아쳤습니다. 그때 죽은 사람이 범인입니다.',
+      };
+    }
+  }
+
+  // ── 마피아: 맞불과 물타기 ─────────────────────────────
+  if (you.role?.team === TEAM.MAFIA) {
+    const allies = new Set(you.allies || []);
+    const targets = aliveOthers.filter((p) => !allies.has(p.id));
+    const policeClaims = chat.filter((c) => c.kind === 'claim.police');
+    // 경찰 주장이 하나 나왔으면 맞불을 놓아 누가 진짜인지 흐린다
+    if (policeClaims.length === 1 && !said('claim.police') && targets.length && chance(0.45)) {
+      const t = pick(targets);
+      return {
+        kind: 'claim.police', about: t.id,
+        text: `아닙니다, 제가 경찰입니다. ${name(t.id)}이(가) 수상합니다.`,
+      };
+    }
+    // 아니면 아무나 지목해 시선을 돌린다
+    if (!said('accuse') && targets.length && chance(0.3)) {
+      const t = pick(targets);
+      return { kind: 'accuse', about: t.id, text: `${name(t.id)} 계속 조용한데요. 의심됩니다.` };
+    }
+    return null;
+  }
+
+  // ── 그 밖의 시민: 가끔 의견을 보탠다 ──────────────────
+  if (!said('agree') && aliveOthers.length && chance(0.18)) {
+    const score = suspicionScores(view);
+    const top = aliveOthers
+      .slice()
+      .sort((a, b) => (score.get(b.id) || 0) - (score.get(a.id) || 0))[0];
+    if (top) return { kind: 'agree', about: top.id, text: `저는 ${name(top.id)}이(가) 걸립니다.` };
+  }
+  return null;
+}
+
 /**
  * 사람별 의심도.
  * 자기가 실제로 가진 근거만 쓴다. 방 내부 상태를 훔쳐보지 않는다.
@@ -207,6 +344,31 @@ function suspicionScores(view) {
       // 두 후보 중 마피아 진영이 섞여 있으면 그만큼 의심스럽다
       const mafiaish = (info.options || []).filter((n) => teamOfRoleName(n) === TEAM.MAFIA).length;
       add(info.about, mafiaish * 35 - (info.options || []).length * 5);
+    }
+  }
+
+  // 낮에 들은 말 반영.
+  // 주장이 사실인지는 알 수 없으므로 「누가 무슨 말을 했나」로만 판단한다.
+  const chat = view.chat || [];
+  const policeClaims = chat.filter((c) => c.kind === 'claim.police');
+  // 경찰이 둘 이상 나왔다면 최소 한 명은 거짓말이다. 양쪽 다 의심스러워진다.
+  const conflicted = new Set(policeClaims.length > 1 ? policeClaims.map((c) => c.playerId) : []);
+
+  for (const c of chat) {
+    if (c.playerId === you.id) continue;
+    if (conflicted.has(c.playerId)) add(c.playerId, 45);
+
+    if (c.kind === 'claim.police' && c.about) {
+      // 맞불이 붙은 상황이면 그 주장을 믿을 수 없다
+      add(c.about, conflicted.size ? 10 : -55);
+    } else if (c.kind === 'claim.detective' && c.about) {
+      add(c.about, conflicted.size ? 10 : 45);
+    } else if (c.kind === 'claim.guard' && c.about) {
+      add(c.about, -25);   // 마피아가 노렸다면 대개 시민이다
+    } else if (c.kind === 'accuse' && c.about) {
+      add(c.about, 15);
+    } else if (c.kind === 'agree' && c.about) {
+      add(c.about, 10);
     }
   }
 

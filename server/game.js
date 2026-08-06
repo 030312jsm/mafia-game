@@ -111,6 +111,9 @@ export class Room {
     this.qrDataUrl = null;
     this.joinUrl = null;
     this.narrationSeq = 0;
+    // 낮 토론에서 오간 발언. 봇들이 서로 듣고 판단에 반영한다.
+    // 화면에는 개발자 모드에서만 보인다.
+    this.chat = [];
     // 이번 판에 실제로 쓰인 직업 목록. 시작할 때 확정된다.
     // config.roles 와 분리해 둔 이유는, 인원수 편성 모드에서는
     // 시작 전까지 어떤 직업이 뽑힐지 아무도 몰라야 하기 때문이다.
@@ -695,6 +698,7 @@ export class Room {
     this.phase = PHASE.ROLE_REVEAL;
     this.day = 1;
     this.result = null;
+    this.chat = [];
     this.soloWins = [];
     this.revealedIds = new Set();
     this.publicReveals = [];
@@ -1009,7 +1013,8 @@ export class Room {
     for (const id of reflectedBy) {
       const p = this.players.get(id);
       p.rs.used.reflect = true;
-      this.tell(id, '누군가 당신을 죽이려 했지만 그대로 되돌려주었습니다. 이 능력은 한 번뿐입니다.');
+      this.tell(id, '누군가 당신을 죽이려 했지만 그대로 되돌려주었습니다. 이 능력은 한 번뿐입니다.',
+        { kind: 'reflect' });
     }
     for (const rk of reflectKills) {
       this.tell(rk.playerId, '공격이 그대로 되돌아왔습니다.');
@@ -1475,6 +1480,7 @@ export class Room {
     this.day = 0;
     this.result = null;
     this.activeRoles = [];
+    this.chat = [];
     this.publicLog = [];
     this.nightActions.clear();
     this.ballots.clear();
@@ -1506,6 +1512,33 @@ export class Room {
   log(text) {
     this.publicLog.push({ day: this.day, phase: this.phase, text, at: Date.now() });
     if (this.publicLog.length > 200) this.publicLog.shift();
+  }
+
+  /**
+   * 낮 토론 발언.
+   * 실제 게임에서 입 밖으로 나온 말과 같은 취급이라, 진실인지 거짓인지는 따지지 않는다.
+   * meta.kind 는 듣는 쪽이 「무슨 주장인지」 알아듣기 위한 것이지 사실 보증이 아니다.
+   *   kind: 'claim.police' | 'claim.detective' | 'claim.guard' | 'claim.reflect'
+   *       | 'accuse' | 'defend' | 'agree'
+   */
+  say(playerId, text, meta = null) {
+    const p = this.players.get(playerId);
+    if (!p) return;
+    this.chat.push({
+      day: this.day,
+      playerId,
+      nickname: p.nickname,
+      seat: p.seat,
+      text,
+      at: Date.now(),
+      ...(meta || {}),
+    });
+    if (this.chat.length > 300) this.chat.shift();
+  }
+
+  /** 이번 판에 이 사람이 이미 같은 종류의 주장을 했는지 */
+  hasSpoken(playerId, kind) {
+    return this.chat.some((c) => c.playerId === playerId && c.kind === kind);
   }
 
   /**
@@ -1699,6 +1732,8 @@ export class Room {
           : null,
       startPending: this.phase === PHASE.ROLE_REVEAL ? this.startActionsPending().length : 0,
       publicLog: this.publicLog.slice(-30),
+      // 봇들이 낮에 주고받은 말. 화면에는 개발자 모드에서만 보여준다.
+      chat: this.chat.slice(-60),
       result: this.result,
       catalog: this.phase === PHASE.LOBBY ? roleCatalog() : null,
       recommend: this.phase === PHASE.LOBBY ? recommendCounts(this.players.size) : null,

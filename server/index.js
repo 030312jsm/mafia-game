@@ -7,7 +7,9 @@ import { Server } from 'socket.io';
 import QRCode from 'qrcode';
 
 import { Room, PHASE } from './game.js';
-import { decideSeat, decideStart, decideNight, decideDay, decideVote } from './bot-brain.js';
+import {
+  decideSeat, decideStart, decideNight, decideDay, decideVote, decideSpeak,
+} from './bot-brain.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
@@ -190,6 +192,18 @@ function runBots(room) {
           if (!room.canActNight(bot) || room.nightActions.has(bot.id)) break;
           const d = decideNight(view);
           if (d && room.submitNightAction(bot.id, d).ok) acted = true;
+          break;
+        }
+        case PHASE.DISCUSS: {
+          // 하루에 한 번만, 그것도 띄엄띄엄 말하게 해서 대화처럼 보이게 한다
+          if (!bot.alive) break;
+          if (room.chat.some((c) => c.playerId === bot.id && c.day === room.day)) break;
+          if (Math.random() > 0.25) break;
+          const speech = decideSpeak(view);
+          if (speech) {
+            room.say(bot.id, speech.text, { kind: speech.kind, about: speech.about });
+            acted = true;
+          }
           break;
         }
         case PHASE.VOTE: {

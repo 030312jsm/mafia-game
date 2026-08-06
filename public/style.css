@@ -328,6 +328,56 @@ input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: 1p
 .drawer-body h3:first-child { margin-top: 0; }
 .drawer-body .log { max-height: none; }
 
+/* ── 봇 대화 (카톡 단체방 형태) ─────────────── */
+.kakao {
+  background: #9bbbd4;
+  border-radius: 12px;
+  padding: 10px 8px;
+  margin: 0 -4px;
+}
+@media (prefers-color-scheme: dark) { .kakao { background: #7d99ad; } }
+
+.kk-day {
+  text-align: center; margin: 6px 0 10px;
+}
+.kk-day::before {
+  content: attr(data-x);
+}
+.kk-day {
+  font-size: 11px; color: #f3f6f8; font-weight: 700;
+  background: rgba(0,0,0,.22); border-radius: 999px;
+  padding: 3px 12px; display: inline-block;
+  margin-left: 50%; transform: translateX(-50%);
+}
+
+.kk-row { display: flex; gap: 7px; margin-bottom: 7px; align-items: flex-start; }
+.kk-row.cont { margin-top: -3px; }
+.kk-face {
+  flex: 0 0 30px; width: 30px; height: 30px; border-radius: 10px;
+  background: #e6ecf1; color: #4a5b68;
+  display: grid; place-items: center;
+  font-size: 12px; font-weight: 800; font-variant-numeric: tabular-nums;
+}
+.kk-row.cont .kk-face { background: transparent; }
+.kk-body { min-width: 0; flex: 1; }
+.kk-name {
+  font-size: 11px; color: #24343f; margin-bottom: 3px; font-weight: 600;
+}
+.kk-kind {
+  background: rgba(0,0,0,.14); color: #1d2b35;
+  border-radius: 5px; padding: 1px 6px; margin-left: 4px; font-size: 10px;
+}
+.kk-line { display: flex; align-items: flex-end; gap: 5px; }
+.kk-bubble {
+  position: relative;
+  background: #fff; color: #17202a;
+  border-radius: 4px 14px 14px 14px;
+  padding: 8px 11px; font-size: 13px; line-height: 1.45;
+  max-width: 82%; word-break: break-word;
+}
+.kk-row.cont .kk-bubble { border-radius: 14px; }
+.kk-time { font-size: 10px; color: #3d4d59; white-space: nowrap; padding-bottom: 2px; }
+
 .lineup-row { padding: 9px 0; border-bottom: 1px solid var(--line); }
 .lineup-row.off { opacity: .45; }
 .lineup-row:last-child { border-bottom: none; }
