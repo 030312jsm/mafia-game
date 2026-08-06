@@ -111,7 +111,6 @@ const DIRECTION = {
     tone: TONE.personal,
     line: '당신은 사망했습니다. 이제부터 발언할 수 없습니다.',
   },
-  'you.act': { tone: TONE.cue },
   'you.converted': { tone: TONE.personal },
 
   'game.end.mafia': { tone: TONE.end },

@@ -368,6 +368,52 @@ const run = async () => {
     g.close();
   }
 
+  // ── 피드백: 사망 통보 / 수호자 방어 성공 / 헬창 차단 ────────
+  {
+    head('피드백 — 죽은 사람은 본인이 죽은 걸 안다');
+    const g = await setup(['mafia', 'police', 'guardian', 'detective', 'soldier', 'gymrat']);
+    await g.toNight();
+    const target = g.you(0).actionTargets[0];
+    const idx = g.c.findIndex((x) => x.id === target);
+    await g.act(0, { targetId: target });
+    await g.passRest();
+    await g.dawn();
+    check('사망자에게 개인 안내', g.info(idx).includes('당신은 사망했습니다'), g.info(idx));
+    check('사망 나레이션이 본인에게만 전달',
+      g.c[idx].cues.includes('you.dead') && !g.c[0].cues.includes('you.dead'),
+      `본인=${g.c[idx].cues.includes('you.dead')} 마피아=${g.c[0].cues.includes('you.dead')}`);
+    check('밤 종료 안내가 전체에 나감', g.c[0].cues.includes('night.close'));
+    g.close();
+  }
+
+  {
+    head('피드백 — 수호자는 자기 보호가 통했는지 안다');
+    const g = await setup(['mafia', 'guardian', 'police', 'detective', 'soldier', 'gymrat']);
+    await g.toNight();
+    const target = g.you(0).actionTargets.find((t) => t !== g.id(1)) ?? g.you(0).actionTargets[0];
+    const idx = g.c.findIndex((x) => x.id === target);
+    await g.act(0, { targetId: target });      // 마피아가 공격
+    await g.act(1, { targetId: target });      // 수호자가 같은 사람을 보호
+    await g.passRest();
+    await g.dawn();
+    check('아무도 죽지 않음', g.c[2].state.deaths.length === 0);
+    check('수호자에게 방어 성공 안내', g.info(1).includes('막아냈습니다'), g.info(1));
+    check('보호받은 본인은 모름', !g.info(idx).includes('막아냈습니다'), g.info(idx) || '(정보 없음)');
+    g.close();
+  }
+
+  {
+    head('피드백 — 헬창은 누구를 막았는지 확인받는다');
+    const g = await setup(['mafia', 'gymrat', 'police', 'guardian', 'detective', 'soldier']);
+    await g.toNight();
+    await g.act(1, { targetId: g.id(2) });     // 헬창이 경찰을 차단
+    await g.passRest();
+    await g.dawn();
+    check('헬창에게 차단 확인', g.info(1).includes('능력을 하루 동안 막았습니다'), g.info(1));
+    check('차단당한 사람도 통보받음', g.info(2).includes('차단되었습니다'), g.info(2));
+    g.close();
+  }
+
   // ── 호신술사: 살해 되받아치기 ───────────────────────────────
   {
     head('호신술사 — 자신을 노린 살해를 되받아친다 (1회)');

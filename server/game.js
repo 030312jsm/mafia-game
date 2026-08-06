@@ -844,12 +844,19 @@ export class Room {
     let gunshot = false;
 
     // 1. 차단
-    for (const { a } of at(NIGHT_ORDER.BLOCK)) blocked.add(a.targetId);
+    for (const { p, a } of at(NIGHT_ORDER.BLOCK)) {
+      blocked.add(a.targetId);
+      this.tell(p.id, `${this.label(this.players.get(a.targetId))} 의 능력을 하루 동안 막았습니다.`);
+    }
 
     const active = (x) => !blocked.has(x.p.id);
 
-    // 2. 보호
-    for (const { a } of at(NIGHT_ORDER.PROTECT).filter(active)) protectedIds.add(a.targetId);
+    // 2. 보호 — 누가 누구를 지켰는지 남겨둔다 (막아냈을 때 알려주기 위해)
+    const guards = [];
+    for (const { p, a } of at(NIGHT_ORDER.PROTECT).filter(active)) {
+      protectedIds.add(a.targetId);
+      guards.push({ byId: p.id, targetId: a.targetId });
+    }
 
     // 3. 포섭 (회장) — 살해 대신 쓰는 능력이라 그날 밤 살해는 일어나지 않는다
     const converts = [];
@@ -968,6 +975,15 @@ export class Room {
       this.tell(c.byId, `${this.label(target)} 을(를) 포섭했습니다.`);
     }
 
+    // 수호자에게 「막아냈다」고 알려준다.
+    // 이게 없으면 아무도 죽지 않은 밤과 구분이 안 돼서, 자기 능력이 통했는지 영영 모른다.
+    const attacked = new Set(killIntents.map((k) => k.playerId));
+    for (const g of guards) {
+      if (!attacked.has(g.targetId)) continue;
+      const who = g.targetId === g.byId ? '당신' : this.label(this.players.get(g.targetId));
+      this.tell(g.byId, `${who} 을(를) 노린 공격이 있었지만 막아냈습니다.`);
+    }
+
     // 호신술사의 되받아치기.
     // 수호자에게 보호받아 살해 자체가 무산됐으면 발동하지 않는다(= 소모되지 않는다).
     const surviving = killIntents.filter((k) => !protectedIds.has(k.playerId));
@@ -1003,7 +1019,7 @@ export class Room {
     this.phase = PHASE.DAWN;
     this.deadline = null;
 
-    const cues = [];
+    const cues = [cue('night.close')];
     if (gunshot) cues.push(cue('sfx.gunshot'));
     cues.push(cue('day.begin'));
     if (this.publicReveals.length) cues.push(cue('day.reporter'));
@@ -1023,6 +1039,10 @@ export class Room {
       .filter((id) => this.players.get(id)?.alive)
       .map((id) => ({ playerId: id, cue: cue('you.converted', null, 'personal') }));
 
+    // 죽은 사람에게는 본인에게만 사망을 알린다.
+    // 화면만 바뀌고 아무 말도 없으면 자기가 죽은 줄 모르고 계속 말을 한다.
+    personalCues.push(...this.deathCues(deaths));
+
     return { cues, personal: personalCues, deaths };
   }
 
@@ -1040,6 +1060,14 @@ export class Room {
     const pool = [...candidates].filter((id) => id !== target.roleId).map(getRole).filter(Boolean);
     if (pool.length) return pool;
     return Object.values(ROLES).filter((r) => r.implemented && r.id !== target.roleId);
+  }
+
+  /** 방금 죽은 사람들에게 보낼 개인 나레이션 */
+  deathCues(deaths) {
+    return deaths.map((d) => {
+      this.tell(d.playerId, '당신은 사망했습니다. 이제부터 발언할 수 없습니다.');
+      return { playerId: d.playerId, cue: cue('you.dead', null, 'personal') };
+    });
   }
 
   // ── 사망 처리 ─────────────────────────────────────────────────
@@ -1278,7 +1306,13 @@ export class Room {
       cues.push(cue('vote.immune'));
     }
 
-    return { cues, executed: deaths.length ? designatedId : null, tally, forced };
+    return {
+      cues,
+      personal: this.deathCues(deaths),
+      executed: deaths.length ? designatedId : null,
+      tally,
+      forced,
+    };
   }
 
   /** 삐에로: 총성을 낸 다음 날 투표로 누군가 죽으면 1점 */
