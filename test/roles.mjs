@@ -414,6 +414,42 @@ const run = async () => {
     g.close();
   }
 
+  // ── 승리 판정: 동수는 아직 과반이 아니다 ────────────────────
+  {
+    head('마피아 과반 — 동수(2:2)에서는 아직 끝나지 않는다');
+    // 6인: 마피아 2 + 시민 4. 밤에 시민 하나가 죽어 3:2 가 되어도 과반은 아니다.
+    const g = await setup(['mafia', 'mafia', 'politician', 'soldier', 'guardian', 'police']);
+    await g.toNight();
+    // 1번 마피아가 6번 경찰을 공격 (양옆)
+    const t1 = g.you(0).actionTargets.find((id) => id === g.id(5)) ?? g.you(0).actionTargets[0];
+    await g.act(0, { targetId: t1 });
+    await g.passRest();
+    await g.dawn();
+    const aliveNow = g.c[0].state.players.filter((p) => p.alive).length;
+    check('한 명 사망해 5명 생존', aliveNow === 5, `생존 ${aliveNow}`);
+    check('마피아 2 / 생존 5 는 과반 아님 — 게임 계속',
+      g.c[0].state.room.phase !== 'END', g.c[0].state.room.phase);
+
+    // 한 명 더 죽여 2:2 를 만든다
+    await g.next();                 // 토론
+    await g.next();                 // 투표
+    await g.abstainAll();
+    await g.execution();
+    await g.next();                 // 2일차 밤
+    await sleep(500);
+    const alive2 = g.c[0].state.players.filter((p) => p.alive && !p.isYou);
+    const t2 = g.you(0).actionTargets[0];
+    await g.act(0, { targetId: t2 });
+    await g.passRest();
+    await g.dawn();
+    const left = g.c[0].state.players.filter((p) => p.alive).length;
+    check('이제 4명 생존 (마피아 2 : 시민 2)', left === 4, `생존 ${left}`);
+    check('동수에서는 마피아 승리가 아니다',
+      g.c[0].state.room.phase !== 'END',
+      `${g.c[0].state.room.phase} / ${JSON.stringify(g.c[0].state.result?.reason)}`);
+    g.close();
+  }
+
   // ── 봇 판단: 표를 버리지 않는다 ─────────────────────────────
   {
     head('봇 — 처형을 견뎌낸 사람에게는 다시 표를 주지 않는다');

@@ -1430,12 +1430,18 @@ export class Room {
           reason: '시민과 중립이 모두 제거되었습니다.',
         };
       }
-      if (mafia.length * 2 >= alive.length) {
+      // 「과반」은 말 그대로 절반을 넘어야 한다. 동수(2:2)는 아직 승리가 아니다.
+      //
+      // 표준 마피아라면 동수에서 마피아 승리로 치는 게 맞다. 투표로 뒤집을 수 없기 때문이다.
+      // 하지만 이 게임에는 투표 밖에서 동수를 깨는 수단이 있다.
+      // 정치인의 강제 지정, 군인의 저격, 저격수, 호신술사의 반사.
+      // 그래서 동수에서 바로 끝내면 그 능력들을 쓸 기회를 빼앗는다.
+      if (mafia.length * 2 > alive.length) {
         return {
           winner: TEAM.MAFIA,
           winners: [{ kind: 'TEAM', team: TEAM.MAFIA, label: '마피아 진영' },
                     ...this.jindoRidersFor({ team: TEAM.MAFIA })],
-          reason: '마피아가 과반을 차지했습니다.',
+          reason: `마피아가 과반을 차지했습니다. (마피아 ${mafia.length} / 생존 ${alive.length})`,
         };
       }
     }
